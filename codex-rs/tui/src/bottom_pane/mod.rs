@@ -158,8 +158,8 @@ impl BottomPane {
                     .as_ref()
                     .map_or(0, |status| status.desired_height(area.width))
                     .min(area.height.saturating_sub(1));
-
-                Layout::vertical([Constraint::Max(status_height), Constraint::Min(1)]).areas(area)
+                Layout::vertical([Constraint::Length(status_height), Constraint::Min(1)])
+                    .areas(area)
             }
         }
     }
@@ -299,6 +299,11 @@ impl BottomPane {
                 .set_ctrl_c_quit_hint(false, self.has_input_focus);
             self.request_redraw();
         }
+    }
+
+    pub(crate) fn set_banner_message(&mut self, message: Option<String>) {
+        self.composer.set_footer_banner_message(message);
+        self.request_redraw();
     }
 
     #[cfg(test)]

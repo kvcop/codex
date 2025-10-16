@@ -27,6 +27,9 @@ pub(crate) enum AppEvent {
     /// bubbling channels through layers of widgets.
     CodexOp(codex_core::protocol::Op),
 
+    /// Re-render the inline scrollback to match the current viewport width.
+    RedrawHistory,
+
     /// Kick off an asynchronous file search for the given query (text after
     /// the `@`). Previous searches may be cancelled by the app layer so there
     /// is at most one in-flight search.
