@@ -102,3 +102,28 @@ pub fn built_in_slash_commands() -> Vec<(&'static str, SlashCommand)> {
 fn beta_features_enabled() -> bool {
     std::env::var_os("BETA_FEATURE").is_some()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redraw_has_expected_metadata() {
+        assert_eq!(
+            SlashCommand::Redraw.description(),
+            "re-render conversation history to fit the current width"
+        );
+        assert!(SlashCommand::Redraw.available_during_task());
+        assert_eq!(SlashCommand::Redraw.command(), "redraw");
+    }
+
+    #[test]
+    fn built_in_commands_include_redraw() {
+        let commands = built_in_slash_commands();
+        assert!(
+            commands
+                .iter()
+                .any(|(name, cmd)| *name == "redraw" && *cmd == SlashCommand::Redraw)
+        );
+    }
+}

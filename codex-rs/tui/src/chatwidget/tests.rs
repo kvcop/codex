@@ -1144,6 +1144,31 @@ fn disabled_slash_command_while_task_running_snapshot() {
     assert_snapshot!(blob);
 }
 
+#[test]
+fn slash_command_redraw_dispatches_event() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+
+    chat.dispatch_command(SlashCommand::Redraw);
+
+    match rx.try_recv() {
+        Ok(AppEvent::RedrawHistory) => {}
+        other => panic!("expected RedrawHistory event, got {other:?}"),
+    }
+}
+
+#[test]
+fn slash_command_redraw_allowed_during_task() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual();
+    chat.bottom_pane.set_task_running(true);
+
+    chat.dispatch_command(SlashCommand::Redraw);
+
+    match rx.try_recv() {
+        Ok(AppEvent::RedrawHistory) => {}
+        other => panic!("expected RedrawHistory event, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn binary_size_transcript_snapshot() {
     // the snapshot in this test depends on gpt-5-codex. Skip for now. We will consider

@@ -483,24 +483,9 @@ impl App {
         }
 
         self.clear_history_scrollback(tui)?;
-        self.has_emitted_history_lines = false;
 
-        for cell in &self.transcript_cells {
-            let mut lines = cell.display_lines(width);
-            if lines.is_empty() {
-                continue;
-            }
-            if !cell.is_stream_continuation() {
-                if self.has_emitted_history_lines {
-                    lines.insert(0, Line::from(""));
-                } else {
-                    self.has_emitted_history_lines = true;
-                }
-            }
+        for lines in self.rebuild_history_lines(width) {
             tui.insert_history_lines(lines);
-            if !self.has_emitted_history_lines {
-                self.has_emitted_history_lines = true;
-            }
         }
 
         self.history_render_width = width;
@@ -515,6 +500,31 @@ impl App {
 
         tui.frame_requester().schedule_frame();
         Ok(())
+    }
+
+    fn rebuild_history_lines(&mut self, width: u16) -> Vec<Vec<Line<'static>>> {
+        self.has_emitted_history_lines = false;
+        let mut batches = Vec::new();
+
+        for cell in &self.transcript_cells {
+            let mut lines = cell.display_lines(width);
+            if lines.is_empty() {
+                continue;
+            }
+            if !cell.is_stream_continuation() {
+                if self.has_emitted_history_lines {
+                    lines.insert(0, Line::from(""));
+                } else {
+                    self.has_emitted_history_lines = true;
+                }
+            }
+            if !self.has_emitted_history_lines {
+                self.has_emitted_history_lines = true;
+            }
+            batches.push(lines);
+        }
+
+        batches
     }
 
     fn clear_history_scrollback(&mut self, tui: &mut tui::Tui) -> std::io::Result<()> {
@@ -606,6 +616,7 @@ mod tests {
     use crate::file_search::FileSearchManager;
     use crate::history_cell::AgentMessageCell;
     use crate::history_cell::HistoryCell;
+    use crate::history_cell::PlainHistoryCell;
     use crate::history_cell::UserHistoryCell;
     use crate::history_cell::new_session_info;
     use codex_core::AuthManager;
@@ -729,5 +740,63 @@ mod tests {
         let (_, nth, prefill) = app.backtrack.pending.clone().expect("pending backtrack");
         assert_eq!(nth, 1);
         assert_eq!(prefill, "follow-up (edited)");
+    }
+
+    #[test]
+    fn rebuild_history_lines_inserts_blank_between_discrete_cells() {
+        let mut app = make_test_app();
+
+        app.transcript_cells = vec![
+            Arc::new(PlainHistoryCell::new(vec![Line::from("first")])) as Arc<dyn HistoryCell>,
+            Arc::new(PlainHistoryCell::new(vec![Line::from("second")])) as Arc<dyn HistoryCell>,
+        ];
+
+        let batches = app.rebuild_history_lines(80);
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0], vec![Line::from("first")]);
+        assert_eq!(batches[1][0], Line::from(""));
+        assert_eq!(batches[1][1], Line::from("second"));
+        assert!(app.has_emitted_history_lines);
+    }
+
+    #[test]
+    fn rebuild_history_lines_skips_blank_for_stream_continuations() {
+        let mut app = make_test_app();
+
+        #[derive(Debug)]
+        struct StreamCell(Vec<Line<'static>>);
+
+        impl HistoryCell for StreamCell {
+            fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+                self.0.clone()
+            }
+
+            fn is_stream_continuation(&self) -> bool {
+                true
+            }
+        }
+
+        app.transcript_cells = vec![
+            Arc::new(PlainHistoryCell::new(vec![Line::from("first")])) as Arc<dyn HistoryCell>,
+            Arc::new(StreamCell(vec![Line::from("continued")])) as Arc<dyn HistoryCell>,
+        ];
+
+        let batches = app.rebuild_history_lines(80);
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0], vec![Line::from("first")]);
+        assert_eq!(batches[1], vec![Line::from("continued")]);
+        assert!(app.has_emitted_history_lines);
+    }
+
+    #[test]
+    fn rebuild_history_lines_returns_empty_for_empty_transcript() {
+        let mut app = make_test_app();
+
+        let batches = app.rebuild_history_lines(80);
+
+        assert!(batches.is_empty());
+        assert!(!app.has_emitted_history_lines);
     }
 }
