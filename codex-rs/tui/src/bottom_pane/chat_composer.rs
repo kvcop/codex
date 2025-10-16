@@ -109,6 +109,7 @@ pub(crate) struct ChatComposer {
     footer_mode: FooterMode,
     footer_hint_override: Option<Vec<(String, String)>>,
     context_window_percent: Option<u8>,
+    footer_banner_message: Option<String>,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -152,6 +153,7 @@ impl ChatComposer {
             footer_mode: FooterMode::ShortcutSummary,
             footer_hint_override: None,
             context_window_percent: None,
+            footer_banner_message: None,
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
@@ -160,9 +162,11 @@ impl ChatComposer {
 
     pub fn desired_height(&self, width: u16) -> u16 {
         let footer_props = self.footer_props();
-        let footer_hint_height = self
+        let base_footer_height = self
             .custom_footer_height()
             .unwrap_or_else(|| footer_height(footer_props));
+        let banner_height = if self.footer_banner_message.is_some() { 1 } else { 0 };
+        let footer_hint_height = base_footer_height.saturating_add(banner_height);
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
         self.textarea
@@ -177,9 +181,11 @@ impl ChatComposer {
 
     fn layout_areas(&self, area: Rect) -> [Rect; 3] {
         let footer_props = self.footer_props();
-        let footer_hint_height = self
+        let base_footer_height = self
             .custom_footer_height()
             .unwrap_or_else(|| footer_height(footer_props));
+        let banner_height = if self.footer_banner_message.is_some() { 1 } else { 0 };
+        let footer_hint_height = base_footer_height.saturating_add(banner_height);
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
         let popup_constraint = match &self.active_popup {
@@ -293,6 +299,10 @@ impl ChatComposer {
         if disabled && !was_disabled {
             self.paste_burst.clear_window_after_non_char();
         }
+    }
+
+    pub(crate) fn set_footer_banner_message(&mut self, message: Option<String>) {
+        self.footer_banner_message = message;
     }
 
     /// Override the footer hint items displayed beneath the composer. Passing
@@ -1500,10 +1510,12 @@ impl WidgetRef for ChatComposer {
             ActivePopup::None => {
                 let footer_props = self.footer_props();
                 let custom_height = self.custom_footer_height();
-                let footer_hint_height =
+                let base_footer_height =
                     custom_height.unwrap_or_else(|| footer_height(footer_props));
+                let banner_height = if self.footer_banner_message.is_some() { 1 } else { 0 };
+                let footer_hint_height = base_footer_height.saturating_add(banner_height);
                 let footer_spacing = Self::footer_spacing(footer_hint_height);
-                let hint_rect = if footer_spacing > 0 && footer_hint_height > 0 {
+                let mut hint_rect = if footer_spacing > 0 && footer_hint_height > 0 {
                     let [_, hint_rect] = Layout::vertical([
                         Constraint::Length(footer_spacing),
                         Constraint::Length(footer_hint_height),
@@ -1513,26 +1525,44 @@ impl WidgetRef for ChatComposer {
                 } else {
                     popup_rect
                 };
-                if let Some(items) = self.footer_hint_override.as_ref() {
-                    if !items.is_empty() {
-                        let mut spans = Vec::with_capacity(items.len() * 4);
-                        for (idx, (key, label)) in items.iter().enumerate() {
-                            spans.push(" ".into());
-                            spans.push(Span::styled(key.clone(), Style::default().bold()));
-                            spans.push(format!(" {label}").into());
-                            if idx + 1 != items.len() {
-                                spans.push("   ".into());
+                if hint_rect.height > 0
+                    && let Some(message) = &self.footer_banner_message
+                {
+                    let [banner_rect, rest] = Layout::vertical([
+                        Constraint::Length(1),
+                        Constraint::Min(hint_rect.height.saturating_sub(1)),
+                    ])
+                    .areas(hint_rect);
+                    let banner_line = Line::from(vec![
+                        "⚠  ".magenta().bold(),
+                        message.as_str().magenta(),
+                    ]);
+                    banner_line.render_ref(banner_rect, buf);
+                    hint_rect = rest;
+                }
+
+                if hint_rect.height > 0 {
+                    if let Some(items) = self.footer_hint_override.as_ref() {
+                        if !items.is_empty() {
+                            let mut spans = Vec::with_capacity(items.len() * 4);
+                            for (idx, (key, label)) in items.iter().enumerate() {
+                                spans.push(" ".into());
+                                spans.push(Span::styled(key.clone(), Style::default().bold()));
+                                spans.push(format!(" {label}").into());
+                                if idx + 1 != items.len() {
+                                    spans.push("   ".into());
+                                }
                             }
+                            let mut custom_rect = hint_rect;
+                            if custom_rect.width > 2 {
+                                custom_rect.x += 2;
+                                custom_rect.width = custom_rect.width.saturating_sub(2);
+                            }
+                            Line::from(spans).render_ref(custom_rect, buf);
                         }
-                        let mut custom_rect = hint_rect;
-                        if custom_rect.width > 2 {
-                            custom_rect.x += 2;
-                            custom_rect.width = custom_rect.width.saturating_sub(2);
-                        }
-                        Line::from(spans).render_ref(custom_rect, buf);
+                    } else if base_footer_height > 0 {
+                        render_footer(hint_rect, buf, footer_props);
                     }
-                } else {
-                    render_footer(hint_rect, buf, footer_props);
                 }
             }
         }

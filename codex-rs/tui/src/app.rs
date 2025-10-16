@@ -24,9 +24,13 @@ use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::ConversationId;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
+use crossterm::cursor::MoveTo;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+use crossterm::terminal::Clear;
+use crossterm::terminal::ClearType;
+use ratatui::crossterm::execute;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use std::path::PathBuf;
@@ -35,6 +39,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 use tokio::select;
 use tokio::sync::mpsc::unbounded_channel;
 // use uuid::Uuid;
@@ -71,6 +76,13 @@ pub(crate) struct App {
 
     // Esc-backtracking state grouped
     pub(crate) backtrack: crate::app_backtrack::BacktrackState,
+
+    /// Width (in columns) at which the inline scrollback was last rendered.
+    history_render_width: u16,
+    /// Tracks the terminal width that already triggered a resize warning.
+    resize_warning_for: Option<u16>,
+    /// When set, clear the banner once the Instant passes.
+    banner_expires_at: Option<Instant>,
 }
 
 impl App {
@@ -152,6 +164,9 @@ impl App {
             has_emitted_history_lines: false,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             backtrack: BacktrackState::default(),
+            history_render_width: tui.terminal.last_known_screen_size.width,
+            resize_warning_for: None,
+            banner_expires_at: None,
         };
 
         let tui_events = tui.event_stream();
@@ -195,6 +210,29 @@ impl App {
                     self.chat_widget.handle_paste(pasted);
                 }
                 TuiEvent::Draw => {
+                    let current_width = tui.terminal.last_known_screen_size.width;
+                    if let Some(expiry) = self.banner_expires_at
+                        && Instant::now() >= expiry
+                    {
+                        self.set_banner(tui, None, None);
+                    }
+                    if current_width != 0 && current_width != self.history_render_width {
+                        if self.resize_warning_for != Some(current_width) {
+                            self.set_banner(
+                                tui,
+                                Some(format!(
+                                "Window resized to {current_width} columns. Run `/redraw` to re-render history."
+                                )),
+                                None,
+                            );
+                            self.resize_warning_for = Some(current_width);
+                        }
+                    } else if current_width == self.history_render_width
+                        && self.resize_warning_for.is_some()
+                    {
+                        self.resize_warning_for = None;
+                        self.set_banner(tui, None, None);
+                    }
                     self.chat_widget.maybe_post_pending_notification(tui);
                     if self
                         .chat_widget
@@ -257,6 +295,9 @@ impl App {
                         tui.insert_history_lines(display);
                     }
                 }
+            }
+            AppEvent::RedrawHistory => {
+                self.redraw_history(tui)?;
             }
             AppEvent::StartCommitAnimation => {
                 if self
@@ -408,6 +449,89 @@ impl App {
         self.chat_widget.token_usage()
     }
 
+    fn set_banner(&mut self, tui: &tui::Tui, message: Option<String>, expires_at: Option<Instant>) {
+        self.banner_expires_at = expires_at;
+        self.chat_widget.set_banner_message(message);
+        if let Some(expiry) = self.banner_expires_at {
+            if let Some(delay) = expiry.checked_duration_since(Instant::now()) {
+                tui.frame_requester().schedule_frame_in(delay);
+            } else {
+                self.banner_expires_at = None;
+                self.chat_widget.set_banner_message(None);
+            }
+        }
+    }
+
+    fn redraw_history(&mut self, tui: &mut tui::Tui) -> Result<()> {
+        if self.overlay.is_some() {
+            self.set_banner(
+                tui,
+                Some("Close active overlays before running `/redraw`.".to_string()),
+                Some(Instant::now() + Duration::from_secs(1)),
+            );
+            return Ok(());
+        }
+
+        let width = tui.terminal.last_known_screen_size.width;
+        if width == 0 {
+            self.set_banner(
+                tui,
+                Some("Cannot re-render history: terminal width is unavailable.".to_string()),
+                Some(Instant::now() + Duration::from_secs(1)),
+            );
+            return Ok(());
+        }
+
+        self.clear_history_scrollback(tui)?;
+        self.has_emitted_history_lines = false;
+
+        for cell in &self.transcript_cells {
+            let mut lines = cell.display_lines(width);
+            if lines.is_empty() {
+                continue;
+            }
+            if !cell.is_stream_continuation() {
+                if self.has_emitted_history_lines {
+                    lines.insert(0, Line::from(""));
+                } else {
+                    self.has_emitted_history_lines = true;
+                }
+            }
+            tui.insert_history_lines(lines);
+            if !self.has_emitted_history_lines {
+                self.has_emitted_history_lines = true;
+            }
+        }
+
+        self.history_render_width = width;
+        self.resize_warning_for = None;
+        let expiry = Instant::now() + Duration::from_secs(1);
+        let message = if self.transcript_cells.is_empty() {
+            "History is empty; nothing to redraw.".to_string()
+        } else {
+            format!("Re-rendered history to fit a {width}-column window.")
+        };
+        self.set_banner(tui, Some(message), Some(expiry));
+
+        tui.frame_requester().schedule_frame();
+        Ok(())
+    }
+
+    fn clear_history_scrollback(&mut self, tui: &mut tui::Tui) -> std::io::Result<()> {
+        let viewport = tui.terminal.viewport_area;
+        {
+            let backend = tui.terminal.backend_mut();
+            execute!(
+                backend,
+                Clear(ClearType::Purge),
+                MoveTo(viewport.x, viewport.y)
+            )?;
+            ratatui::backend::Backend::flush(backend)?;
+        }
+        tui.terminal.clear()?;
+        Ok(())
+    }
+
     fn on_update_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
         self.chat_widget.set_reasoning_effort(effort);
         self.config.model_reasoning_effort = effort;
@@ -520,6 +644,9 @@ mod tests {
             enhanced_keys_supported: false,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             backtrack: BacktrackState::default(),
+            history_render_width: 0,
+            resize_warning_for: None,
+            banner_expires_at: None,
         }
     }
 

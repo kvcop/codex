@@ -1178,6 +1178,9 @@ impl ChatWidget {
             SlashCommand::Status => {
                 self.add_status_output();
             }
+            SlashCommand::Redraw => {
+                self.app_event_tx.send(AppEvent::RedrawHistory);
+            }
             SlashCommand::Mcp => {
                 self.add_mcp_output();
             }
@@ -1858,6 +1861,10 @@ impl ChatWidget {
     pub(crate) fn add_error_message(&mut self, message: String) {
         self.add_to_history(history_cell::new_error_event(message));
         self.request_redraw();
+    }
+
+    pub(crate) fn set_banner_message(&mut self, message: Option<String>) {
+        self.bottom_pane.set_banner_message(message);
     }
 
     pub(crate) fn add_mcp_output(&mut self) {
