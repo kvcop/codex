@@ -11,14 +11,58 @@ use ratatui::widgets::WidgetRef;
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::ops::Range;
+use std::time::Duration;
+use std::time::Instant;
 use textwrap::Options;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 const WORD_SEPARATORS: &str = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
+const BACKSPACE_DUPE_WINDOW: Duration = Duration::from_millis(30);
 
 fn is_word_separator(ch: char) -> bool {
     WORD_SEPARATORS.contains(ch)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BackspaceVariant {
+    Backspace { alt: bool },
+    CtrlH { alt: bool },
+}
+
+impl BackspaceVariant {
+    fn from_event(event: &KeyEvent) -> Option<Self> {
+        match event {
+            KeyEvent {
+                code: KeyCode::Backspace,
+                modifiers,
+                ..
+            } => Some(Self::Backspace {
+                alt: modifiers.contains(KeyModifiers::ALT),
+            }),
+            KeyEvent {
+                code: KeyCode::Char('h'),
+                modifiers,
+                ..
+            } if *modifiers == KeyModifiers::CONTROL => Some(Self::CtrlH { alt: false }),
+            KeyEvent {
+                code: KeyCode::Char('h'),
+                modifiers,
+                ..
+            } if *modifiers == (KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+                Some(Self::CtrlH { alt: true })
+            }
+            _ => None,
+        }
+    }
+
+    fn is_dupe_of(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Backspace { alt: a }, Self::CtrlH { alt: b })
+            | (Self::CtrlH { alt: a }, Self::Backspace { alt: b }) => a == b,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +78,7 @@ pub(crate) struct TextArea {
     preferred_col: Option<usize>,
     elements: Vec<TextElement>,
     kill_buffer: String,
+    last_backspace_variant: Option<(BackspaceVariant, Instant)>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +102,7 @@ impl TextArea {
             preferred_col: None,
             elements: Vec::new(),
             kill_buffer: String::new(),
+            last_backspace_variant: None,
         }
     }
 
@@ -67,6 +113,7 @@ impl TextArea {
         self.preferred_col = None;
         self.elements.clear();
         self.kill_buffer.clear();
+        self.last_backspace_variant = None;
     }
 
     pub fn text(&self) -> &str {
@@ -213,6 +260,9 @@ impl TextArea {
     }
 
     pub fn input(&mut self, event: KeyEvent) {
+        if self.should_suppress_backspace_dupe(&event) {
+            return;
+        }
         match event {
             // Some terminals (or configurations) send Control key chords as
             // C0 control characters without reporting the CONTROL modifier.
@@ -448,6 +498,25 @@ impl TextArea {
                 tracing::debug!("Unhandled key event in TextArea: {:?}", _o);
             }
         }
+    }
+
+    fn should_suppress_backspace_dupe(&mut self, event: &KeyEvent) -> bool {
+        let Some(current) = BackspaceVariant::from_event(event) else {
+            self.last_backspace_variant = None;
+            return false;
+        };
+
+        let now = Instant::now();
+        if let Some((previous, at)) = self.last_backspace_variant
+            && now.duration_since(at) <= BACKSPACE_DUPE_WINDOW
+            && previous.is_dupe_of(current)
+        {
+            self.last_backspace_variant = Some((current, now));
+            return true;
+        }
+
+        self.last_backspace_variant = Some((current, now));
+        false
     }
 
     // ####### Input Functions #######
@@ -1480,6 +1549,17 @@ mod tests {
         t.input(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
         assert_eq!(t.text(), "124");
         assert_eq!(t.cursor(), 3);
+    }
+
+    #[test]
+    fn suppresses_backspace_ctrl_h_duplicate() {
+        let mut t = ta_with("abc");
+        t.set_cursor(t.text().len());
+
+        t.input(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        t.input(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+
+        pretty_assertions::assert_eq!((t.text(), t.cursor()), ("ab", 2));
     }
 
     #[cfg_attr(not(windows), ignore = "AltGr modifier only applies on Windows")]
