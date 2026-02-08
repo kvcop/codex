@@ -6,17 +6,28 @@ use serde::Serialize;
 
 /// Base instructions for the orchestrator role.
 const ORCHESTRATOR_PROMPT: &str = include_str!("../../templates/agents/orchestrator.md");
+/// Base instructions prelude for the research role.
+const RESEARCH_PROMPT: &str = include_str!("../../templates/agents/research.md");
+/// Base instructions prelude for the artifacts role.
+const ARTIFACTS_PROMPT: &str = include_str!("../../templates/agents/artifacts.md");
+/// Base instructions prelude for the QA role.
+const QA_PROMPT: &str = include_str!("../../templates/agents/qa.md");
+/// Base instructions prelude for the reviewer role.
+const REVIEWER_PROMPT: &str = include_str!("../../templates/agents/reviewer.md");
 /// Default model override used.
 // TODO(jif) update when we have something smarter.
 const EXPLORER_MODEL: &str = "gpt-5.1-codex-mini";
 
 /// Enumerated list of all supported agent roles.
-const ALL_ROLES: [AgentRole; 3] = [
+const ALL_ROLES: [AgentRole; 8] = [
     AgentRole::Default,
     AgentRole::Explorer,
     AgentRole::Worker,
-    // TODO(jif) add when we have stable prompts + models
-    // AgentRole::Orchestrator,
+    AgentRole::Orchestrator,
+    AgentRole::Research,
+    AgentRole::Artifacts,
+    AgentRole::Qa,
+    AgentRole::Reviewer,
 ];
 
 /// Hard-coded agent role selection used when spawning sub-agents.
@@ -31,6 +42,14 @@ pub enum AgentRole {
     Worker,
     /// Task-executing agent with a fixed model override.
     Explorer,
+    /// Research-only agent: reads, compares, summarizes, proposes options.
+    Research,
+    /// Artifacts-only agent: produces structured outputs, templates, drafts.
+    Artifacts,
+    /// QA agent: test execution and verification (no code edits by default).
+    Qa,
+    /// Read-only reviewer: code review / risk analysis / checks.
+    Reviewer,
 }
 
 /// Immutable profile data that drives per-agent configuration overrides.
@@ -105,6 +124,58 @@ Rules:
                 "#,
                 ..Default::default()
             },
+            AgentRole::Research => AgentProfile {
+                base_instructions: Some(RESEARCH_PROMPT),
+                reasoning_effort: Some(ReasoningEffort::High),
+                read_only: true,
+                description: r#"Use for research and comparisons.
+Typical tasks:
+- Read docs / code and summarize facts
+- Compare options and tradeoffs
+- Produce short, decision-ready recommendations
+Rules:
+- Prefer read-only work: do not modify files.
+- If tool output is long, summarize and extract the key lines."#,
+                ..Default::default()
+            },
+            AgentRole::Artifacts => AgentProfile {
+                base_instructions: Some(ARTIFACTS_PROMPT),
+                reasoning_effort: Some(ReasoningEffort::Low),
+                read_only: true,
+                description: r#"Use for generating artifacts.
+Typical tasks:
+- Draft Markdown docs, checklists, templates
+- Produce structured JSON/YAML outputs
+Rules:
+- Prefer returning final artifacts, not commentary.
+- Do not modify files unless explicitly asked."#,
+                ..Default::default()
+            },
+            AgentRole::Qa => AgentProfile {
+                base_instructions: Some(QA_PROMPT),
+                reasoning_effort: Some(ReasoningEffort::Medium),
+                description: r#"Use for verification and test execution.
+Typical tasks:
+- Run tests / smoke checks
+- Enumerate edge cases and regressions
+Rules:
+- Do not modify code unless explicitly asked.
+- Prefer reporting failing commands + key logs + likely cause."#,
+                ..Default::default()
+            },
+            AgentRole::Reviewer => AgentProfile {
+                base_instructions: Some(REVIEWER_PROMPT),
+                reasoning_effort: Some(ReasoningEffort::Medium),
+                read_only: true,
+                description: r#"Use for review / QA / risk analysis.
+Typical tasks:
+- Code review with concrete findings
+- Test plan / edge cases / regressions checklist
+Rules:
+- Do not modify files.
+- Prefer crisp, actionable findings over prose."#,
+                ..Default::default()
+            },
         }
     }
 
@@ -112,7 +183,13 @@ Rules:
     pub fn apply_to_config(self, config: &mut Config) -> Result<(), String> {
         let profile = self.profile();
         if let Some(base_instructions) = profile.base_instructions {
-            config.base_instructions = Some(base_instructions.to_string());
+            let prev = config.base_instructions.take().unwrap_or_default();
+            // Prefix role-specific guidance, keep the session's base instructions intact.
+            config.base_instructions = if prev.trim().is_empty() {
+                Some(base_instructions.to_string())
+            } else {
+                Some(format!("{base_instructions}\n\n{prev}"))
+            };
         }
         if let Some(model) = profile.model {
             config.model = Some(model.to_string());
