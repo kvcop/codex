@@ -26,6 +26,13 @@ enum UserNotification {
         /// The last message sent by the assistant in the turn.
         last_assistant_message: Option<String>,
     },
+    #[serde(rename_all = "kebab-case")]
+    ApprovalRequested {
+        thread_id: String,
+        turn_id: String,
+        cwd: String,
+        approval_kind: crate::HookApprovalKind,
+    },
 }
 
 pub fn legacy_notify_json(hook_event: &HookEvent, cwd: &Path) -> Result<String, serde_json::Error> {
@@ -39,8 +46,16 @@ pub fn legacy_notify_json(hook_event: &HookEvent, cwd: &Path) -> Result<String, 
                 last_assistant_message: event.last_assistant_message.clone(),
             })
         }
+        HookEvent::AfterApprovalRequested { event } => {
+            serde_json::to_string(&UserNotification::ApprovalRequested {
+                thread_id: event.thread_id.to_string(),
+                turn_id: event.turn_id.clone(),
+                cwd: cwd.display().to_string(),
+                approval_kind: event.approval_kind.clone(),
+            })
+        }
         _ => Err(serde_json::Error::io(std::io::Error::other(
-            "legacy notify payload is only supported for after_agent",
+            "legacy notify payload is only supported for after_agent and after_approval_requested",
         ))),
     }
 }
@@ -96,6 +111,16 @@ mod tests {
         })
     }
 
+    fn expected_approval_notification_json() -> Value {
+        json!({
+            "type": "approval-requested",
+            "thread-id": "b5f6c1c2-1111-2222-3333-444455556666",
+            "turn-id": "12345",
+            "cwd": "/Users/example/project",
+            "approval-kind": "exec_command",
+        })
+    }
+
     #[test]
     fn test_user_notification() -> Result<()> {
         let notification = UserNotification::AgentTurnComplete {
@@ -130,6 +155,24 @@ mod tests {
         let serialized = legacy_notify_json(&hook_event, Path::new("/Users/example/project"))?;
         let actual: Value = serde_json::from_str(&serialized)?;
         assert_eq!(actual, expected_notification_json());
+
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_notify_json_for_approval_requested() -> Result<()> {
+        let hook_event = HookEvent::AfterApprovalRequested {
+            event: crate::HookEventAfterApprovalRequested {
+                thread_id: ThreadId::from_string("b5f6c1c2-1111-2222-3333-444455556666")
+                    .expect("valid thread id"),
+                turn_id: "12345".to_string(),
+                approval_kind: crate::HookApprovalKind::ExecCommand,
+            },
+        };
+
+        let serialized = legacy_notify_json(&hook_event, Path::new("/Users/example/project"))?;
+        let actual: Value = serde_json::from_str(&serialized)?;
+        assert_eq!(actual, expected_approval_notification_json());
 
         Ok(())
     }

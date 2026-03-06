@@ -81,6 +81,22 @@ pub struct HookEventAfterAgent {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum HookApprovalKind {
+    ExecCommand,
+    ApplyPatch,
+    Skill,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookEventAfterApprovalRequested {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub approval_kind: HookApprovalKind,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum HookToolKind {
     Function,
     Custom,
@@ -149,6 +165,10 @@ pub enum HookEvent {
         #[serde(flatten)]
         event: HookEventAfterAgent,
     },
+    AfterApprovalRequested {
+        #[serde(flatten)]
+        event: HookEventAfterApprovalRequested,
+    },
     AfterToolUse {
         #[serde(flatten)]
         event: HookEventAfterToolUse,
@@ -166,8 +186,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
+    use super::HookApprovalKind;
     use super::HookEvent;
     use super::HookEventAfterAgent;
+    use super::HookEventAfterApprovalRequested;
     use super::HookEventAfterToolUse;
     use super::HookPayload;
     use super::HookToolInput;
@@ -206,6 +228,42 @@ mod tests {
                 "turn_id": "turn-1",
                 "input_messages": ["hello"],
                 "last_assistant_message": "hi",
+            },
+        });
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn after_approval_requested_payload_serializes_stable_wire_shape() {
+        let session_id = ThreadId::new();
+        let thread_id = ThreadId::new();
+        let payload = HookPayload {
+            session_id,
+            cwd: PathBuf::from("tmp"),
+            triggered_at: Utc
+                .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
+                .single()
+                .expect("valid timestamp"),
+            hook_event: HookEvent::AfterApprovalRequested {
+                event: HookEventAfterApprovalRequested {
+                    thread_id,
+                    turn_id: "turn-approval".to_string(),
+                    approval_kind: HookApprovalKind::ExecCommand,
+                },
+            },
+        };
+
+        let actual = serde_json::to_value(payload).expect("serialize hook payload");
+        let expected = json!({
+            "session_id": session_id.to_string(),
+            "cwd": "tmp",
+            "triggered_at": "2025-01-01T00:00:00Z",
+            "hook_event": {
+                "event_type": "after_approval_requested",
+                "thread_id": thread_id.to_string(),
+                "turn_id": "turn-approval",
+                "approval_kind": "exec_command",
             },
         });
 

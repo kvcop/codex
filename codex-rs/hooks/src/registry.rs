@@ -13,6 +13,7 @@ pub struct HooksConfig {
 #[derive(Clone)]
 pub struct Hooks {
     after_agent: Vec<Hook>,
+    after_approval_requested: Vec<Hook>,
     after_tool_use: Vec<Hook>,
 }
 
@@ -26,14 +27,19 @@ impl Default for Hooks {
 // executed after specific events in the Codex lifecycle.
 impl Hooks {
     pub fn new(config: HooksConfig) -> Self {
-        let after_agent = config
+        let legacy_notify_hook = config
             .legacy_notify_argv
             .filter(|argv| !argv.is_empty() && !argv[0].is_empty())
-            .map(crate::notify_hook)
-            .into_iter()
-            .collect();
+            .map(crate::notify_hook);
+        let mut after_agent = Vec::new();
+        let mut after_approval_requested = Vec::new();
+        if let Some(hook) = legacy_notify_hook {
+            after_agent.push(hook.clone());
+            after_approval_requested.push(hook);
+        }
         Self {
             after_agent,
+            after_approval_requested,
             after_tool_use: Vec::new(),
         }
     }
@@ -41,6 +47,7 @@ impl Hooks {
     fn hooks_for_event(&self, hook_event: &HookEvent) -> &[Hook] {
         match hook_event {
             HookEvent::AfterAgent { .. } => &self.after_agent,
+            HookEvent::AfterApprovalRequested { .. } => &self.after_approval_requested,
             HookEvent::AfterToolUse { .. } => &self.after_tool_use,
         }
     }
@@ -91,7 +98,9 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
+    use crate::types::HookApprovalKind;
     use crate::types::HookEventAfterAgent;
+    use crate::types::HookEventAfterApprovalRequested;
     use crate::types::HookEventAfterToolUse;
     use crate::types::HookResult;
     use crate::types::HookToolInput;
@@ -197,6 +206,24 @@ mod tests {
         }
     }
 
+    fn after_approval_requested_payload(label: &str) -> HookPayload {
+        HookPayload {
+            session_id: ThreadId::new(),
+            cwd: PathBuf::from(CWD),
+            triggered_at: Utc
+                .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
+                .single()
+                .expect("valid timestamp"),
+            hook_event: HookEvent::AfterApprovalRequested {
+                event: HookEventAfterApprovalRequested {
+                    thread_id: ThreadId::new(),
+                    turn_id: format!("turn-{label}"),
+                    approval_kind: HookApprovalKind::ExecCommand,
+                },
+            },
+        }
+    }
+
     #[test]
     fn command_from_argv_returns_none_for_empty_args() {
         assert!(command_from_argv(&[]).is_none());
@@ -245,6 +272,14 @@ mod tests {
                 legacy_notify_argv: Some(vec!["notify-send".to_string()]),
             })
             .after_agent
+            .len(),
+            1
+        );
+        assert_eq!(
+            Hooks::new(HooksConfig {
+                legacy_notify_argv: Some(vec!["notify-send".to_string()]),
+            })
+            .after_approval_requested
             .len(),
             1
         );
@@ -320,6 +355,23 @@ mod tests {
         };
 
         let outcomes = hooks.dispatch(after_tool_use_payload("p")).await;
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].hook_name, "counting");
+        assert!(matches!(outcomes[0].result, HookResult::Success));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_executes_after_approval_requested_hooks() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let hooks = Hooks {
+            after_approval_requested: vec![counting_success_hook(&calls, "counting")],
+            ..Hooks::default()
+        };
+
+        let outcomes = hooks
+            .dispatch(after_approval_requested_payload("approval"))
+            .await;
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].hook_name, "counting");
         assert!(matches!(outcomes[0].result, HookResult::Success));

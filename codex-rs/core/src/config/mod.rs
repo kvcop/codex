@@ -256,7 +256,8 @@ pub struct Config {
 
     /// Optional external notifier command. When set, Codex will spawn this
     /// program after each completed *turn* (i.e. when the agent finishes
-    /// processing a user submission). The value must be the full command
+    /// processing a user submission) and when approvals are requested. The value
+    /// must be the full command
     /// broken into argv tokens **without** the trailing JSON argument - Codex
     /// appends one extra argument containing a JSON payload describing the
     /// event.

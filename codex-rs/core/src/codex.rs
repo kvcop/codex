@@ -49,8 +49,10 @@ use crate::util::error_or_panic;
 use crate::ws_version_from_features;
 use async_channel::Receiver;
 use async_channel::Sender;
+use codex_hooks::HookApprovalKind;
 use codex_hooks::HookEvent;
 use codex_hooks::HookEventAfterAgent;
+use codex_hooks::HookEventAfterApprovalRequested;
 use codex_hooks::HookPayload;
 use codex_hooks::HookResult;
 use codex_hooks::Hooks;
@@ -2324,6 +2326,51 @@ impl Session {
         }
     }
 
+    async fn dispatch_after_approval_requested_hook(
+        &self,
+        turn_context: &TurnContext,
+        approval_kind: HookApprovalKind,
+    ) {
+        let hook_outcomes = self
+            .hooks()
+            .dispatch(HookPayload {
+                session_id: self.conversation_id,
+                cwd: turn_context.cwd.clone(),
+                triggered_at: chrono::Utc::now(),
+                hook_event: HookEvent::AfterApprovalRequested {
+                    event: HookEventAfterApprovalRequested {
+                        thread_id: self.conversation_id,
+                        turn_id: turn_context.sub_id.clone(),
+                        approval_kind,
+                    },
+                },
+            })
+            .await;
+
+        for hook_outcome in hook_outcomes {
+            let hook_name = hook_outcome.hook_name;
+            match hook_outcome.result {
+                HookResult::Success => {}
+                HookResult::FailedContinue(error) => {
+                    warn!(
+                        turn_id = %turn_context.sub_id,
+                        hook_name = %hook_name,
+                        error = %error,
+                        "after_approval_requested hook failed; continuing"
+                    );
+                }
+                HookResult::FailedAbort(error) => {
+                    warn!(
+                        turn_id = %turn_context.sub_id,
+                        hook_name = %hook_name,
+                        error = %error,
+                        "after_approval_requested hook failed; continuing"
+                    );
+                }
+            }
+        }
+    }
+
     async fn maybe_mirror_event_text_to_realtime(&self, msg: &EventMsg) {
         let Some(text) = realtime_text_for_event(msg) else {
             return;
@@ -2613,6 +2660,8 @@ impl Session {
                 },
             ]
         });
+        self.dispatch_after_approval_requested_hook(turn_context, HookApprovalKind::ExecCommand)
+            .await;
         let event = EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
             call_id,
             approval_id,
@@ -2655,6 +2704,8 @@ impl Session {
             warn!("Overwriting existing pending approval for call_id: {approval_id}");
         }
 
+        self.dispatch_after_approval_requested_hook(turn_context, HookApprovalKind::ApplyPatch)
+            .await;
         let event = EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
             call_id,
             turn_id: turn_context.sub_id.clone(),
@@ -2719,6 +2770,8 @@ impl Session {
             warn!("Overwriting existing pending skill approval for item_id: {item_id}");
         }
 
+        self.dispatch_after_approval_requested_hook(turn_context, HookApprovalKind::Skill)
+            .await;
         self.send_event(
             turn_context,
             EventMsg::SkillRequestApproval(
