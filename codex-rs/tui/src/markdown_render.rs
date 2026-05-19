@@ -22,8 +22,9 @@
 //!    alignment count.
 //! 3. **Compute column widths** -- allocate widths with Narrative/Structured
 //!    priority and iterative shrinking.
-//! 4. **Render box grid** -- Unicode borders (`┌───┬───┐`) or fallback to pipe
-//!    format when the minimum cannot fit.
+//! 4. **Render box grid** -- Unicode borders (`┌───┬───┐`) or fallback to
+//!    record-list format when the minimum cannot fit or the wrapped table would
+//!    become hard to scan.
 //! 5. **Append spillover** -- extracted spillover rows rendered as plain text
 //!    after the table.
 //!
@@ -33,8 +34,9 @@
 //! avg char width) or Structured (short tokens).  The shrink loop removes
 //! one character at a time, preferring Narrative columns, until the total
 //! fits the available width.  A guard cost penalises shrinking below a
-//! column's header token width.  When even 3-char-wide columns cannot fit,
-//! the table falls back to pipe-delimited format.
+//! column's header token width.  When even 3-char-wide columns cannot fit, or
+//! when a dense table would wrap into very tall rows, the table falls back to a
+//! record-list layout.
 
 use crate::render::highlight::highlight_code_to_lines;
 use crate::render::line_utils::line_to_static;
@@ -63,6 +65,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 use url::Url;
 
@@ -207,7 +210,7 @@ impl TableState {
 
 /// Rendered table output split by wrapping behavior.
 ///
-/// `table_lines` are either prewrapped grid rows (box rendering) or pipe
+/// `table_lines` are either prewrapped grid rows (box rendering) or record-list
 /// fallback rows that should still pass through normal wrapping.
 /// `spillover_lines` are prose rows extracted from parser artifacts and should
 /// be routed through normal wrapping.
@@ -216,6 +219,10 @@ struct RenderedTableLines {
     table_lines_prewrapped: bool,
     spillover_lines: Vec<Line<'static>>,
 }
+
+const TABLE_RECORD_FALLBACK_MAX_ROW_HEIGHT: usize = 6;
+const TABLE_RECORD_FALLBACK_NARROW_COLUMN_WIDTH: usize = 4;
+const TABLE_RECORD_FALLBACK_MIN_COLUMNS: usize = 6;
 
 /// Classification of a table column for width-allocation priority.
 ///
@@ -996,9 +1003,9 @@ where
     /// minimum column widths exceed available terminal width). Spillover rows
     /// are appended as plain text after the table grid.
     ///
-    /// Falls back to `render_table_pipe_fallback` (raw `| A | B |` format)
-    /// when `compute_column_widths` returns `None` (terminal too narrow for
-    /// even 3-char-wide columns).
+    /// Falls back to `render_table_records_fallback` when `compute_column_widths`
+    /// returns `None` (terminal too narrow for even 3-char-wide columns) or the
+    /// computed grid would be too dense to read comfortably.
     fn render_table_lines(&self, mut table_state: TableState) -> RenderedTableLines {
         let column_count = table_state.alignments.len();
         if column_count == 0 {
@@ -1044,15 +1051,19 @@ where
 
         let Some(column_widths) = widths else {
             return RenderedTableLines {
-                table_lines: self.render_table_pipe_fallback(
-                    &header,
-                    &rows,
-                    &table_state.alignments,
-                ),
+                table_lines: self.render_table_records_fallback(&header, &rows),
                 table_lines_prewrapped: false,
                 spillover_lines,
             };
         };
+
+        if self.should_render_table_as_records(&header, &rows, &column_widths) {
+            return RenderedTableLines {
+                table_lines: self.render_table_records_fallback(&header, &rows),
+                table_lines_prewrapped: false,
+                spillover_lines,
+            };
+        }
 
         let border_style = Style::new().dim();
         let mut out = Vec::with_capacity(3 + rows.len() * 2);
@@ -1195,7 +1206,7 @@ where
                 if word_count > 0 {
                     total_words += word_count;
                     total_cells += 1;
-                    total_cell_width += plain.width();
+                    total_cell_width += Self::terminal_display_width(&plain);
                 }
             }
 
@@ -1205,7 +1216,7 @@ where
                 total_words as f64 / total_cells as f64
             };
             let avg_cell_width = if total_cells == 0 {
-                header_plain.width() as f64
+                Self::terminal_display_width(&header_plain) as f64
             } else {
                 total_cell_width as f64 / total_cells as f64
             };
@@ -1356,55 +1367,97 @@ where
         out
     }
 
-    /// Render the table as raw pipe-delimited lines (`| A | B |`).
-    ///
-    /// Used when `compute_column_widths` returns `None` (terminal too narrow
-    /// for even 3-char-wide columns).  Pipe characters inside cell content are
-    /// escaped as `\|` so downstream parsers keep cell boundaries intact.
-    fn render_table_pipe_fallback(
+    fn should_render_table_as_records(
         &self,
         header: &[TableCell],
         rows: &[Vec<TableCell>],
-        alignments: &[Alignment],
+        column_widths: &[usize],
+    ) -> bool {
+        if rows.iter().any(|row| {
+            self.table_row_height(row, column_widths) > TABLE_RECORD_FALLBACK_MAX_ROW_HEIGHT
+        }) {
+            return true;
+        }
+
+        let narrow_columns = column_widths
+            .iter()
+            .filter(|width| **width <= TABLE_RECORD_FALLBACK_NARROW_COLUMN_WIDTH)
+            .count();
+        let header_is_cramped = header
+            .iter()
+            .zip(column_widths)
+            .any(|(cell, width)| Self::longest_token_width(&cell.plain_text()) > *width);
+
+        column_widths.len() >= TABLE_RECORD_FALLBACK_MIN_COLUMNS
+            && header_is_cramped
+            && narrow_columns * 2 >= column_widths.len()
+    }
+
+    fn render_table_records_fallback(
+        &self,
+        header: &[TableCell],
+        rows: &[Vec<TableCell>],
     ) -> Vec<Line<'static>> {
         let mut out = Vec::new();
-        out.push(Line::from(Self::row_to_pipe_string(header)));
-        out.push(Line::from(Self::alignments_to_pipe_delimiter(alignments)));
-        out.extend(
-            rows.iter()
-                .map(|row| Line::from(Self::row_to_pipe_string(row))),
-        );
-        out
-    }
-
-    fn row_to_pipe_string(row: &[TableCell]) -> String {
-        let mut out = String::new();
-        out.push('|');
-        for cell in row {
-            out.push(' ');
-            // Preserve literal `|` inside cell text in markdown fallback mode so
-            // downstream markdown parsers keep the cell content intact.
-            out.push_str(&cell.plain_text().replace('|', "\\|"));
-            out.push(' ');
-            out.push('|');
+        for (row_index, row) in rows.iter().enumerate() {
+            for column_index in 0..header.len() {
+                let mut spans = Self::table_cell_inline_spans(header.get(column_index), || {
+                    format!("Column {}", column_index + 1)
+                });
+                spans.push(Span::styled(": ", Style::new().dim()));
+                spans.extend(Self::table_cell_inline_spans(
+                    row.get(column_index),
+                    String::new,
+                ));
+                out.push(Line::from(spans));
+            }
+            if row_index + 1 < rows.len() {
+                out.push(self.render_record_separator());
+            }
         }
         out
     }
 
-    fn alignments_to_pipe_delimiter(alignments: &[Alignment]) -> String {
-        let mut out = String::new();
-        out.push('|');
-        for alignment in alignments {
-            let segment = match alignment {
-                Alignment::Left => ":---",
-                Alignment::Center => ":---:",
-                Alignment::Right => "---:",
-                Alignment::None => "---",
-            };
-            out.push_str(segment);
-            out.push('|');
+    fn table_cell_inline_spans(
+        cell: Option<&TableCell>,
+        fallback: impl FnOnce() -> String,
+    ) -> Vec<Span<'static>> {
+        let Some(cell) = cell else {
+            return vec![Span::raw(fallback())];
+        };
+        let mut spans = Vec::new();
+        for (line_index, line) in cell.lines.iter().enumerate() {
+            if line_index > 0 {
+                spans.push(Span::raw(" "));
+            }
+            spans.extend(line.spans.clone());
         }
-        out
+        if spans.is_empty() {
+            spans.push(Span::raw(fallback()));
+        }
+        spans
+    }
+
+    fn render_record_separator(&self) -> Line<'static> {
+        let separator_width = self
+            .wrap_width
+            .map(|wrap_width| {
+                let prefix_width = Self::spans_display_width(&self.prefix_spans(false));
+                wrap_width.saturating_sub(prefix_width).clamp(1, 40)
+            })
+            .unwrap_or(40);
+        Line::from(Span::styled(
+            "─".repeat(separator_width),
+            Style::new().dim(),
+        ))
+    }
+
+    fn table_row_height(&self, row: &[TableCell], column_widths: &[usize]) -> usize {
+        row.iter()
+            .zip(column_widths)
+            .map(|(cell, width)| self.wrap_cell(cell, *width).len())
+            .max()
+            .unwrap_or(1)
     }
 
     /// Wrap a single table cell's content to `width`, preserving rich inline
@@ -1527,7 +1580,10 @@ where
 
     #[inline]
     fn spans_display_width(spans: &[Span<'_>]) -> usize {
-        spans.iter().map(|span| span.content.width()).sum()
+        spans
+            .iter()
+            .map(|span| Self::terminal_display_width(span.content.as_ref()))
+            .sum()
     }
 
     #[inline]
@@ -1546,7 +1602,23 @@ where
 
     #[inline]
     fn longest_token_width(text: &str) -> usize {
-        text.split_whitespace().map(str::width).max().unwrap_or(0)
+        text.split_whitespace()
+            .map(Self::terminal_display_width)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn terminal_display_width(text: &str) -> usize {
+        text.graphemes(true)
+            .map(|grapheme| {
+                let width = grapheme.width();
+                if width > 0 && grapheme.contains('\u{fe0f}') {
+                    width.max(2)
+                } else {
+                    width
+                }
+            })
+            .sum()
     }
 
     fn push_inline_style(&mut self, style: Style) {

@@ -1219,6 +1219,49 @@ mod tests {
     }
 
     #[test]
+    fn controller_live_tail_uses_records_for_dense_table() {
+        let mut ctrl = stream_controller(Some(34));
+        ctrl.push("| ID | Scenario | Preconditions | Steps | Expected | Status |\n");
+        ctrl.push("|---|---|---|---|---|---|\n");
+        ctrl.push("| 1 | Register | Signup screen | Submit form | User is created | Todo |\n");
+
+        let tail = lines_to_plain_strings(&ctrl.current_tail_lines());
+
+        assert!(tail.iter().any(|line| line == "ID: 1"));
+        assert!(
+            tail.iter().any(|line| line == "Expected: User is created"),
+            "expected record fallback in live table tail: {tail:?}",
+        );
+        assert!(!tail.iter().any(|line| line.contains('┌')));
+        assert!(
+            !tail.iter().any(|line| line.trim()
+                == "| ID | Scenario | Preconditions | Steps | Expected | Status |")
+        );
+    }
+
+    #[test]
+    fn controller_live_unclosed_markdown_fence_table_uses_records_after_delimiter() {
+        let mut ctrl = stream_controller(Some(34));
+        ctrl.push("```md\n");
+        ctrl.push("| ID | Scenario | Preconditions | Steps | Expected | Status |\n");
+        ctrl.push("|---|---|---|---|---|---|\n");
+        ctrl.push("| 1 | Register | Signup screen | Submit form | User is created | Todo |\n");
+
+        let tail = lines_to_plain_strings(&ctrl.current_tail_lines());
+
+        assert!(tail.iter().any(|line| line == "ID: 1"));
+        assert!(
+            tail.iter().any(|line| line == "Expected: User is created"),
+            "expected record fallback for live markdown-fenced table: {tail:?}",
+        );
+        assert!(!tail.iter().any(|line| line.trim() == "```md"));
+        assert!(
+            !tail.iter().any(|line| line.trim()
+                == "| ID | Scenario | Preconditions | Steps | Expected | Status |")
+        );
+    }
+
+    #[test]
     fn controller_holds_blockquoted_table_tail_until_stable() {
         let deltas = vec![
             "> | A | B |\n",

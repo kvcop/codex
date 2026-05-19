@@ -81,8 +81,9 @@ pub(crate) fn append_markdown_agent_with_cwd(
 /// block.
 ///
 /// The fence unwrapping is intentionally conservative: it buffers the entire fence body before
-/// deciding, and an unclosed fence at end-of-input is re-emitted with its opening line so partial
-/// streams degrade to code display.
+/// deciding. For partial streams, an unclosed fence is re-emitted with its opening line until a
+/// table is confirmed; once a header + delimiter pair is present, the fence body is emitted as
+/// markdown so live table rendering can start before the closing fence arrives.
 fn unwrap_markdown_fences<'a>(markdown_source: &'a str) -> Cow<'a, str> {
     // Zero-copy fast path: most messages contain no fences at all.
     if !markdown_source.contains("```") && !markdown_source.contains("~~~") {
@@ -280,7 +281,13 @@ fn unwrap_markdown_fences<'a>(markdown_source: &'a str) -> Cow<'a, str> {
         match active {
             ActiveFence::Passthrough(_) => {}
             ActiveFence::MarkdownCandidate(data) => {
-                push_source_range(data.opening_range);
+                let contains_table = markdown_fence_contains_table(
+                    &content_from_ranges(markdown_source, &data.content_ranges),
+                    data.fence.is_blockquoted,
+                );
+                if !contains_table {
+                    push_source_range(data.opening_range);
+                }
                 for range in data.content_ranges {
                     push_source_range(range);
                 }
@@ -399,6 +406,28 @@ mod tests {
         let rendered = lines_to_strings(&out);
         assert!(rendered.iter().any(|line| line.contains("┌")));
         assert!(rendered.iter().any(|line| line.contains("│ 1   │ 2   │")));
+    }
+
+    #[test]
+    fn append_markdown_agent_live_unwraps_unclosed_markdown_fence_once_table_is_confirmed() {
+        let src = "```markdown\n| A | B |\n|---|---|\n";
+        let mut out = Vec::new();
+        append_markdown_agent(src, /*width*/ None, &mut out);
+        let rendered = lines_to_strings(&out);
+
+        assert!(rendered.iter().any(|line| line.contains("┌")));
+        assert!(!rendered.iter().any(|line| line.trim() == "```markdown"));
+        assert!(!rendered.iter().any(|line| line.trim() == "| A | B |"));
+    }
+
+    #[test]
+    fn append_markdown_agent_keeps_unclosed_markdown_fence_before_table_is_confirmed() {
+        let src = "```markdown\n| A | B |\n";
+        let mut out = Vec::new();
+        append_markdown_agent(src, /*width*/ None, &mut out);
+        let rendered = lines_to_strings(&out);
+
+        assert_eq!(rendered, vec!["| A | B |".to_string()]);
     }
 
     #[test]

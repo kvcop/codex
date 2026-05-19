@@ -1466,6 +1466,23 @@ fn table_alignment_respects_markers() {
 }
 
 #[test]
+fn table_alignment_counts_emoji_presentation_width() {
+    let md = "| Дата | Задача | План | Факт |\n\
+|---|---|:---:|:---:|\n\
+| Пн | Настроить CI | ✅ | ✅ |\n\
+| Вт | Написать тесты | ✅ | ⚠️ |\n\
+| Ср | Исправить баги | ⏳ | — |\n";
+    let text = render_markdown_text(md);
+    let lines: Vec<String> = text
+        .lines
+        .iter()
+        .map(|line| line.spans.iter().map(|span| span.content.clone()).collect())
+        .collect();
+
+    assert_eq!(lines[4], "│ Вт   │ Написать тесты │  ✅  │  ⚠️  │");
+}
+
+#[test]
 fn table_wraps_cell_content_when_width_is_narrow() {
     let md = "| Key | Description |\n| --- | --- |\n| -v | Enable very verbose logging output for debugging |\n";
     let text = crate::markdown_render::render_markdown_text_with_width(md, Some(30));
@@ -1513,7 +1530,7 @@ fn escaped_pipes_render_in_table_cells() {
 }
 
 #[test]
-fn table_falls_back_to_pipe_rendering_if_it_cannot_fit() {
+fn table_falls_back_to_records_if_it_cannot_fit() {
     let md = "| c1 | c2 | c3 | c4 | c5 | c6 | c7 | c8 | c9 | c10 |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |\n";
     let text = crate::markdown_render::render_markdown_text_with_width(md, Some(20));
     let lines: Vec<String> = text
@@ -1522,6 +1539,29 @@ fn table_falls_back_to_pipe_rendering_if_it_cannot_fit() {
         .map(|line| line.spans.iter().map(|span| span.content.clone()).collect())
         .collect();
 
-    assert!(lines.first().is_some_and(|line| line.starts_with('|')));
+    assert_eq!(lines.first(), Some(&"c1: 1".to_string()));
+    assert!(lines.iter().any(|line| line == "c10: 10"));
+    assert!(!lines.iter().any(|line| line.contains('┌')));
+    assert!(!lines.iter().any(|line| line.starts_with('|')));
+}
+
+#[test]
+fn table_falls_back_to_records_when_wrapped_rows_are_too_tall() {
+    let md = "| Category | Initiator | Team | Region | Business | Budget | Start | Estimate | KPI | Result | Comment |\n\
+|---|---|---|---|---|---|---|---|---|---|---|\n\
+| Experiment | product | backend | EU | Growth | 12000 | 2026-05-20 | 14:00 | Chasm reduction | Watching | The experiment is in final preparation and depends on baseline stability from last week. Check that thresholds do not drift because of seasonality and outside traffic before continuing. |\n";
+    let text = crate::markdown_render::render_markdown_text_with_width(md, Some(88));
+    let lines: Vec<String> = text
+        .lines
+        .iter()
+        .map(|line| line.spans.iter().map(|span| span.content.clone()).collect())
+        .collect();
+
+    assert!(lines.iter().any(|line| line == "Category: Experiment"));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("Comment: The experiment is in final preparation"))
+    );
     assert!(!lines.iter().any(|line| line.contains('┌')));
 }
