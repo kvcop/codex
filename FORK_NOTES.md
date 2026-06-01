@@ -30,6 +30,32 @@ conflict with future upstream merges or need manual retesting after an update.
 - Why this matters: unsetting tmux environment variables bypasses the safety
   warning, but it also prevents Codex from wrapping Kitty graphics in tmux DCS
   passthrough. Keeping `TMUX` visible lets the existing passthrough wrapper run.
+- Tmux must allow passthrough for the wrapper to reach Kitty. Check it with:
+
+  ```fish
+  tmux show-options -gqv allow-passthrough
+  ```
+
+  Enable it for the current tmux server:
+
+  ```fish
+  tmux set -g allow-passthrough on
+  ```
+
+  If a pane has a local override, enable the current pane explicitly:
+
+  ```fish
+  tmux set -p allow-passthrough on
+  ```
+
+  Persist it in `~/.tmux.conf`:
+
+  ```tmux
+  set -g allow-passthrough on
+  ```
+
+  Tmux also supports `all`, which allows passthrough even for invisible panes;
+  prefer `on` for testing because it only allows visible panes.
 - Usage in fish:
 
   ```fish
