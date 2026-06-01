@@ -22,6 +22,7 @@ const ST: &str = "\x1b\\";
 const KITTY_CHUNK_SIZE: usize = 4096;
 const SIXEL_CACHE_VERSION: &str = "v2";
 const ITERM2_KITTY_MIN_VERSION: (u64, u64, u64) = (3, 6, 0);
+const UNSAFE_TUI_PETS_PROTOCOL_ENV_VAR: &str = "CODEX_UNSAFE_TUI_PETS_PROTOCOL";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageProtocol {
@@ -110,7 +111,11 @@ impl FromStr for ProtocolSelection {
 }
 
 pub(crate) fn detect_pet_image_support() -> PetImageSupport {
-    if env::var_os("TMUX").is_some() || env::var_os("TMUX_PANE").is_some() {
+    if let Some(support) = unsafe_pet_image_support_override() {
+        return support;
+    }
+
+    if tmux_env_present() {
         return PetImageSupport::Unsupported(PetImageUnsupportedReason::Tmux);
     }
 
@@ -130,6 +135,14 @@ pub(crate) fn detect_pet_image_support() -> PetImageSupport {
     }
 
     pet_image_support_for_terminal(&terminal_info())
+}
+
+fn unsafe_pet_image_support_override() -> Option<PetImageSupport> {
+    let value = env::var(UNSAFE_TUI_PETS_PROTOCOL_ENV_VAR).ok()?;
+    match value.as_str() {
+        "kitty" => Some(PetImageSupport::Supported(ImageProtocol::Kitty)),
+        _ => None,
+    }
 }
 
 fn pet_image_support_for_terminal(info: &TerminalInfo) -> PetImageSupport {
@@ -274,12 +287,16 @@ fn kitty_image_id_arg(image_id: Option<u32>) -> String {
 }
 
 fn wrap_for_tmux_if_needed(command: &str) -> String {
-    if env::var_os("TMUX").is_none() {
+    if !tmux_env_present() {
         return command.to_string();
     }
 
     let escaped = command.replace(ESC, "\x1b\x1b");
     format!("{ESC}Ptmux;{escaped}{ST}")
+}
+
+fn tmux_env_present() -> bool {
+    env::var_os("TMUX").is_some() || env::var_os("TMUX_PANE").is_some()
 }
 
 pub fn sixel_frame(frame_path: &Path, cache_dir: &Path, height_px: u16) -> Result<PathBuf> {
@@ -343,7 +360,8 @@ mod tests {
     #[test]
     #[serial]
     fn kitty_png_transmission_encodes_inline_data() {
-        let _guard = EnvVarGuard::new("TMUX", /*value*/ None);
+        let _tmux = EnvVarGuard::new("TMUX", /*value*/ None);
+        let _tmux_pane = EnvVarGuard::new("TMUX_PANE", /*value*/ None);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("frame.png");
         fs::write(&path, b"png").unwrap();
@@ -362,6 +380,17 @@ mod tests {
     #[serial]
     fn tmux_passthrough_wraps_and_escapes_control_sequence() {
         let _guard = EnvVarGuard::new("TMUX", Some("session"));
+        assert_eq!(
+            wrap_for_tmux_if_needed("\x1b_Gx;\x1b\\"),
+            "\x1bPtmux;\x1b\x1b_Gx;\x1b\x1b\\\x1b\\"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn tmux_pane_env_also_uses_passthrough_wrapper() {
+        let _tmux = EnvVarGuard::new("TMUX", /*value*/ None);
+        let _tmux_pane = EnvVarGuard::new("TMUX_PANE", Some("%1"));
         assert_eq!(
             wrap_for_tmux_if_needed("\x1b_Gx;\x1b\\"),
             "\x1bPtmux;\x1b\x1b_Gx;\x1b\x1b\\\x1b\\"
@@ -388,6 +417,32 @@ mod tests {
     #[serial]
     fn auto_protocol_is_disabled_inside_tmux() {
         let _guard = EnvVarGuard::new("TMUX", Some("session"));
+        let _override = EnvVarGuard::new(UNSAFE_TUI_PETS_PROTOCOL_ENV_VAR, /*value*/ None);
+
+        assert_eq!(
+            ProtocolSelection::Auto.resolve(),
+            PetImageSupport::Unsupported(PetImageUnsupportedReason::Tmux)
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn unsafe_kitty_override_allows_auto_protocol_inside_tmux() {
+        let _tmux = EnvVarGuard::new("TMUX", Some("session"));
+        let _tmux_pane = EnvVarGuard::new("TMUX_PANE", Some("%1"));
+        let _override = EnvVarGuard::new(UNSAFE_TUI_PETS_PROTOCOL_ENV_VAR, Some("kitty"));
+
+        assert_eq!(
+            ProtocolSelection::Auto.resolve(),
+            PetImageSupport::Supported(ImageProtocol::Kitty)
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn unsafe_pet_override_ignores_unknown_protocol() {
+        let _tmux = EnvVarGuard::new("TMUX", Some("session"));
+        let _override = EnvVarGuard::new(UNSAFE_TUI_PETS_PROTOCOL_ENV_VAR, Some("bogus"));
 
         assert_eq!(
             ProtocolSelection::Auto.resolve(),
@@ -590,6 +645,7 @@ mod tests {
         let _zellij = EnvVarGuard::new("ZELLIJ", /*value*/ None);
         let _zellij_session = EnvVarGuard::new("ZELLIJ_SESSION_NAME", /*value*/ None);
         let _zellij_version = EnvVarGuard::new("ZELLIJ_VERSION", /*value*/ None);
+        let _override = EnvVarGuard::new(UNSAFE_TUI_PETS_PROTOCOL_ENV_VAR, /*value*/ None);
         let _kitty = EnvVarGuard::new("KITTY_WINDOW_ID", /*value*/ None);
         let _wezterm = EnvVarGuard::new("WEZTERM_VERSION", Some("20240203"));
         let _wezterm_executable = EnvVarGuard::new("WEZTERM_EXECUTABLE", /*value*/ None);
@@ -674,7 +730,8 @@ mod tests {
     #[test]
     #[serial]
     fn kitty_file_png_transmission_encodes_local_file_reference() {
-        let _guard = EnvVarGuard::new("TMUX", /*value*/ None);
+        let _tmux = EnvVarGuard::new("TMUX", /*value*/ None);
+        let _tmux_pane = EnvVarGuard::new("TMUX_PANE", /*value*/ None);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("frame.png");
         fs::write(&path, b"png").unwrap();
