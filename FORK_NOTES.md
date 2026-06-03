@@ -6,16 +6,24 @@ conflict with future upstream merges or need manual retesting after an update.
 
 ## Markdown Tables
 
-- Branch lineage: `fix/md-tables-rust-v0.135.0-new`.
-- Local behavior keeps the wide-table readability fallback: when a table cannot
-  fit or wrapped rows become too tall to scan, it renders rows as key/value
-  records instead of preserving an unreadable grid.
+- Branch lineage: `fix/md-tables-rust-v0.136.0-new`.
+- Upstream `rust-v0.136.0` now includes the primary key/value record fallback
+  for cramped markdown tables and preserves OSC 8 hyperlink metadata through
+  that renderer. Keep the upstream renderer as the base unless a regression is
+  proven locally.
+- Local behavior still adds readability guards on top of upstream: when a grid
+  technically fits but wrapped rows become too tall to scan, or when many
+  headers are squeezed into very narrow columns, render rows as key/value
+  records instead of preserving the grid.
+- Local width measurement treats emoji variation-selector grapheme clusters as
+  two terminal cells when needed, which keeps centered emoji table cells aligned
+  in Kitty/tmux.
 - Streaming behavior holds incomplete pipe-table chunks until the header
   delimiter confirms a table, then renders the live table instead of showing raw
   markdown line-by-line.
-- Upstream `rust-v0.135.0` added app-style table rendering and improved column
-  allocation. The fork currently keeps upstream app-style rows for readable
-  tables and applies the local record fallback for cramped tables.
+- Upstream `rust-v0.136.0` also added official table streaming/rendering changes,
+  so local streaming tests should be kept mainly as regression coverage for the
+  raw-markdown flicker cases seen with larger models.
 - Retest after each upstream merge:
   - wide Russian tables with many columns;
   - emoji-width alignment in centered cells;
