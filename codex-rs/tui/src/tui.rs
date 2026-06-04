@@ -516,6 +516,14 @@ struct PendingHistoryLines {
     wrap_policy: HistoryLineWrapPolicy,
 }
 
+#[derive(Clone, Copy)]
+enum DrawMode {
+    Standard,
+    ResizeReflow,
+}
+
+type AmbientPetImageRenderResult = std::result::Result<(), crate::pets::PetImageRenderError>;
+
 fn clear_for_viewport_change<B>(terminal: &mut CustomTerminal<B>, new_area: Rect) -> Result<()>
 where
     B: Backend + Write,
@@ -843,6 +851,29 @@ impl Tui {
         height: u16,
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
+        self.draw_with_optional_ambient_pet_image(height, DrawMode::Standard, |frame| {
+            draw_fn(frame);
+            None
+        })
+        .map(|_| ())
+    }
+
+    pub fn draw_with_ambient_pet_image(
+        &mut self,
+        height: u16,
+        draw_fn: impl FnOnce(&mut custom_terminal::Frame) -> Option<crate::pets::AmbientPetDraw>,
+    ) -> Result<AmbientPetImageRenderResult> {
+        self.draw_with_optional_ambient_pet_image(height, DrawMode::Standard, |frame| {
+            Some(draw_fn(frame))
+        })
+    }
+
+    fn draw_with_optional_ambient_pet_image(
+        &mut self,
+        height: u16,
+        draw_mode: DrawMode,
+        draw_fn: impl FnOnce(&mut custom_terminal::Frame) -> Option<Option<crate::pets::AmbientPetDraw>>,
+    ) -> Result<AmbientPetImageRenderResult> {
         // If we are resuming from ^Z, we need to prepare the resume action now so we can apply it
         // in the synchronized update.
         #[cfg(unix)]
@@ -852,7 +883,10 @@ impl Tui {
 
         // Precompute any viewport updates that need a cursor-position query before entering
         // the synchronized update, to avoid racing with the event reader.
-        let mut pending_viewport_area = self.pending_viewport_area()?;
+        let mut pending_viewport_area = match draw_mode {
+            DrawMode::Standard => self.pending_viewport_area()?,
+            DrawMode::ResizeReflow => None,
+        };
 
         ensure_virtual_terminal_processing()?;
 
@@ -863,28 +897,39 @@ impl Tui {
             }
 
             let terminal = &mut self.terminal;
-            if let Some(new_area) = pending_viewport_area.take() {
-                terminal.set_viewport_area(new_area);
-                terminal.clear()?;
-            }
+            match draw_mode {
+                DrawMode::Standard => {
+                    if let Some(new_area) = pending_viewport_area.take() {
+                        terminal.set_viewport_area(new_area);
+                        terminal.clear()?;
+                    }
 
-            let size = terminal.size()?;
+                    let size = terminal.size()?;
 
-            let mut area = terminal.viewport_area;
-            area.height = height.min(size.height);
-            area.width = size.width;
-            // If the viewport has expanded, scroll everything else up to make room.
-            if area.bottom() > size.height {
-                terminal
-                    .backend_mut()
-                    .scroll_region_up(0..area.top(), area.bottom() - size.height)?;
-                area.y = size.height - area.height;
-            }
-            if area != terminal.viewport_area {
-                // On startup, the old viewport can still be empty. Clear from the
-                // new viewport top so stale shell cells do not show through spaces.
-                clear_for_viewport_change(terminal, area)?;
-                terminal.set_viewport_area(area);
+                    let mut area = terminal.viewport_area;
+                    area.height = height.min(size.height);
+                    area.width = size.width;
+                    // If the viewport has expanded, scroll everything else up to make room.
+                    if area.bottom() > size.height {
+                        terminal
+                            .backend_mut()
+                            .scroll_region_up(0..area.top(), area.bottom() - size.height)?;
+                        area.y = size.height - area.height;
+                    }
+                    if area != terminal.viewport_area {
+                        // On startup, the old viewport can still be empty. Clear from the
+                        // new viewport top so stale shell cells do not show through spaces.
+                        clear_for_viewport_change(terminal, area)?;
+                        terminal.set_viewport_area(area);
+                    }
+                }
+                DrawMode::ResizeReflow => {
+                    let needs_full_repaint =
+                        Self::update_inline_viewport_for_resize_reflow(terminal, height)?;
+                    if needs_full_repaint {
+                        terminal.invalidate_viewport();
+                    }
+                }
             }
 
             Self::flush_pending_history_lines(
@@ -907,29 +952,33 @@ impl Tui {
                 self.suspend_context.set_cursor_y(inline_area_bottom);
             }
 
+            let mut ambient_pet_request = None;
             terminal.draw(|frame| {
-                draw_fn(frame);
-            })
+                ambient_pet_request = draw_fn(frame);
+            })?;
+
+            if let Some(request) = ambient_pet_request {
+                Self::render_ambient_pet_image_without_sync(
+                    terminal,
+                    &mut self.ambient_pet_image_state,
+                    request,
+                )
+            } else {
+                Ok(Ok(()))
+            }
         })?
     }
 
-    pub fn draw_ambient_pet_image(
-        &mut self,
+    fn render_ambient_pet_image_without_sync(
+        terminal: &mut Terminal,
+        state: &mut crate::pets::PetImageRenderState,
         request: Option<crate::pets::AmbientPetDraw>,
-    ) -> std::result::Result<(), crate::pets::PetImageRenderError> {
-        if let Err(err) = ensure_virtual_terminal_processing() {
-            return Err(crate::pets::PetImageRenderError::Terminal(err));
+    ) -> Result<AmbientPetImageRenderResult> {
+        match crate::pets::render_ambient_pet_image(terminal.backend_mut(), state, request) {
+            Ok(()) => Ok(Ok(())),
+            Err(crate::pets::PetImageRenderError::Terminal(err)) => Err(err),
+            Err(err @ crate::pets::PetImageRenderError::Asset(_)) => Ok(Err(err)),
         }
-
-        let terminal = &mut self.terminal;
-        let state = &mut self.ambient_pet_image_state;
-        stdout().sync_update(|_| {
-            match crate::pets::render_ambient_pet_image(terminal.backend_mut(), state, request) {
-                Ok(()) => Ok(Ok(())),
-                Err(crate::pets::PetImageRenderError::Terminal(err)) => Err(err),
-                Err(err @ crate::pets::PetImageRenderError::Asset(_)) => Ok(Err(err)),
-            }
-        })??
     }
 
     pub fn draw_pet_picker_preview_image(
@@ -979,52 +1028,21 @@ impl Tui {
         height: u16,
         draw_fn: impl FnOnce(&mut custom_terminal::Frame),
     ) -> Result<()> {
-        // If we are resuming from ^Z, we need to prepare the resume action now so we can apply it
-        // in the synchronized update.
-        #[cfg(unix)]
-        let mut prepared_resume = self
-            .suspend_context
-            .prepare_resume_action(&mut self.terminal, &mut self.alt_saved_viewport);
+        self.draw_with_optional_ambient_pet_image(height, DrawMode::ResizeReflow, |frame| {
+            draw_fn(frame);
+            None
+        })
+        .map(|_| ())
+    }
 
-        ensure_virtual_terminal_processing()?;
-
-        stdout().sync_update(|_| {
-            #[cfg(unix)]
-            if let Some(prepared) = prepared_resume.take() {
-                prepared.apply(&mut self.terminal)?;
-            }
-
-            let terminal = &mut self.terminal;
-            let needs_full_repaint =
-                Self::update_inline_viewport_for_resize_reflow(terminal, height)?;
-            Self::flush_pending_history_lines(
-                terminal,
-                &mut self.pending_history_lines,
-                self.is_zellij,
-            )?;
-
-            if needs_full_repaint {
-                terminal.invalidate_viewport();
-            }
-
-            // Update the y position for suspending so Ctrl-Z can place the cursor correctly.
-            #[cfg(unix)]
-            {
-                let area = terminal.viewport_area;
-                let inline_area_bottom = if self.alt_screen_active.load(Ordering::Relaxed) {
-                    self.alt_saved_viewport
-                        .map(|r| r.bottom().saturating_sub(1))
-                        .unwrap_or_else(|| area.bottom().saturating_sub(1))
-                } else {
-                    area.bottom().saturating_sub(1)
-                };
-                self.suspend_context.set_cursor_y(inline_area_bottom);
-            }
-
-            terminal.draw(|frame| {
-                draw_fn(frame);
-            })
-        })?
+    pub fn draw_with_resize_reflow_and_ambient_pet_image(
+        &mut self,
+        height: u16,
+        draw_fn: impl FnOnce(&mut custom_terminal::Frame) -> Option<crate::pets::AmbientPetDraw>,
+    ) -> Result<AmbientPetImageRenderResult> {
+        self.draw_with_optional_ambient_pet_image(height, DrawMode::ResizeReflow, |frame| {
+            Some(draw_fn(frame))
+        })
     }
 
     fn pending_viewport_area(&mut self) -> Result<Option<Rect>> {

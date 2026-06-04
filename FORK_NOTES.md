@@ -78,9 +78,25 @@ conflict with future upstream merges or need manual retesting after an update.
   during resize. Use it only for local testing.
 - Current implementation only recognizes `kitty`; unknown values are ignored and
   normal detection is used.
+- Local flicker mitigation keeps the Phase 1+2 path from
+  `docs/local-fork/pet-rendering-flicker-plan.md`: identical Kitty redraws are
+  deduplicated, and frame changes display the new owned image id before deleting
+  the previous image id without freeing image data.
+- The ambient pet draw is emitted inside the same terminal synchronized update
+  as the main chat frame so large transcript redraws do not expose an
+  intermediate text-only frame before the pet image payload arrives.
+- Phase 3 cached-placement rendering is intentionally deferred. It reduced PNG
+  retransmits, but tmux tab switching left stale/foreign pet placements around
+  and sometimes failed to repaint the current pet. Do not re-enable stable
+  `a=p` placement caching until the fork has a tmux-safe placement lifecycle
+  strategy.
 - Retest after changes:
   - pet appears in a Kitty terminal inside tmux;
   - image survives normal TUI redraws;
+  - submitting a message does not introduce unacceptable blink;
+  - horizontal section dividers before final-answer streaming do not introduce
+    unacceptable blink;
+  - switching Kitty/tmux tabs does not leave stale pets from other sessions;
   - resize behavior is acceptable or at least fails visibly;
   - `TMUX_PANE` without `TMUX` still uses tmux passthrough wrapping.
 
