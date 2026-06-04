@@ -61,6 +61,13 @@ on. The roadmap remains the control surface; this file is the evidence appendix.
   or flicker evidence requires it.
 - First-wave debug movement is Kitty-first. Sixel keeps the pet at home unless
   a later manual validation explicitly promotes Sixel movement.
+- The first debug movement lane is the right-side reserved pet column area
+  inside the current rendered buffer. It is not the gap between composer-bottom
+  and screen-bottom anchors because that gap can be zero in the normal inline
+  viewport.
+- Candidate movement rects outside the rendered buffer are unsafe. Codex cannot
+  inspect terminal scrollback cells above the rendered viewport, so unknown cells
+  must be rejected rather than treated as blank.
 - The `FORK_NOTES.md` residual-flicker revisit note is handled by Plan 01 manual
   validation plus Validation 06 before behavior-heavy work is promoted.
 
@@ -69,4 +76,6 @@ on. The roadmap remains the control surface; this file is the evidence appendix.
 - Roadmap review with Claude:
   - initial review `CHANGES_REQUESTED`, 2026-06-05;
   - follow-up review `APPROVED`, 2026-06-05.
-- Plan 01 review with Claude: pending.
+- Plan 01 review with Claude:
+  - initial executable-plan review `CHANGES_REQUESTED`, 2026-06-05;
+  - follow-up executable-plan review `APPROVED`, 2026-06-05.

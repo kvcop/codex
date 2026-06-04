@@ -10,7 +10,7 @@ source_context: ./REFERENCE.md
 **Roadmap status:** active
 **Current wave:** Wave 1
 **Program max depth:** 2
-**Next action:** run_plan_creation:01-movement-substrate
+**Next action:** execute_approved_plan:01-movement-substrate
 **Why:** movement needs safe technical primitives before product behavior can
 be grilled or implemented. The first item is bounded and does not decide idle or
 composer personality.
@@ -54,7 +54,7 @@ This is broader than one implementation plan:
 
 | Item | Status | Horizon | Depends On | Promotion / Close Trigger |
 |---|---|---|---|---|
-| [01-movement-substrate](01-movement-substrate.md) | pending | current-wave | none | Run `plan-creation` before execution |
+| [01-movement-substrate](01-movement-substrate.md) | approved | current-wave | none | Execute through `phased-execution` |
 | [02-idle-screensaver-grill](02-idle-screensaver-grill.md) | requires_grill | current-wave | 01 | `propose_grill:02-idle-screensaver-grill`; promote after accepted grill output |
 | [03-composer-curiosity-grill](03-composer-curiosity-grill.md) | requires_grill | future-wave | 01, 02 evidence | Promote after idle movement evidence or explicit priority override |
 | [04-letter-interactions](04-letter-interactions.md) | future-note | far-horizon | 01, 03 | Promote when text restoration can be specified safely |
@@ -68,7 +68,7 @@ behavior plans and terminal compatibility evidence.
 
 | Plan | Status | Depends On | Commit / Branch | Done Means |
 |---|---|---|---|---|
-| [01-movement-substrate](01-movement-substrate.md) | pending | none | - | Movement primitives and debug-manual path are accepted |
+| [01-movement-substrate](01-movement-substrate.md) | approved | none | - | Movement primitives and debug-manual path are accepted |
 | [02-idle-screensaver-grill](02-idle-screensaver-grill.md) | requires_grill | 01 | - | Grill decisions exist and Plan 02 can be created |
 | [06-terminal-compat-validation](06-terminal-compat-validation.md) | validation-note | 01 | - | Compatibility notes are updated after movement debug evidence |
 
@@ -120,6 +120,8 @@ Plan 01: movement substrate
   movement evidence.
 - 2026-06-05: The accepted residual flicker note from `FORK_NOTES.md` is
   revisited through Plan 01 manual validation and Validation 06.
+- 2026-06-05: Plan 01 was expanded through `plan-creation`, updated after
+  Claude `CHANGES_REQUESTED`, then approved by Claude for `phased-execution`.
 
 ## Resume Instructions
 
