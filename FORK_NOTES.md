@@ -85,11 +85,19 @@ conflict with future upstream merges or need manual retesting after an update.
 - The ambient pet draw is emitted inside the same terminal synchronized update
   as the main chat frame so large transcript redraws do not expose an
   intermediate text-only frame before the pet image payload arrives.
+- When finalized history/tool-call rows are flushed into terminal scrollback,
+  the ambient pet renderer forces one immediate redraw even if the pet frame and
+  position did not change. This keeps the Phase 1 dedupe for ordinary frames but
+  repairs most divider/tool-call repaint gaps.
 - Phase 3 cached-placement rendering is intentionally deferred. It reduced PNG
   retransmits, but tmux tab switching left stale/foreign pet placements around
   and sometimes failed to repaint the current pet. Do not re-enable stable
   `a=p` placement caching until the fork has a tmux-safe placement lifecycle
   strategy.
+- Known residual behavior: in Kitty inside tmux, the pet can still rarely
+  disappear briefly during horizontal divider redraws or bursts of tool-call
+  history. This is acceptable for now; revisit if it becomes frequent or before
+  implementing real pet movement across transcript/composer rows.
 - Retest after changes:
   - pet appears in a Kitty terminal inside tmux;
   - image survives normal TUI redraws;

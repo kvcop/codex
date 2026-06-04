@@ -271,6 +271,12 @@ context.
 - Rare flicker reported after Phase 2 is re-checked after Phase 3: one blink on
   message submit and one blink when a horizontal section divider appears before
   final-answer streaming.
+- Accepted Phase 4 follow-up: history/tool-call flushes force one ambient pet
+  redraw to repair most divider/tool-call repaint gaps while keeping ordinary
+  identical redraw dedupe.
+- Known residual: the pet can still rarely disappear briefly in Kitty/tmux
+  during horizontal divider redraws or bursts of tool-call history. Leave this
+  as documented follow-up unless it becomes frequent.
 - Focused tests pass.
 - Debug build has been manually accepted by Вова.
 - Release build is produced only after manual acceptance.
@@ -285,6 +291,9 @@ context.
 - [ ] If the submit/divider flicker remains, decide whether to add a narrow
       targeted repaint workaround or leave it as a documented tmux passthrough
       limitation.
+- [ ] If rare divider/tool-call flicker remains after the targeted repaint
+      workaround, record it as accepted residual behavior and revisit later
+      rather than adding another speculative repaint layer.
 - [ ] Вова confirms manual debug behavior is acceptable.
 - [ ] `cargo build --release -p codex-cli` passes.
 - [ ] `target/release/codex --version` reports expected version.

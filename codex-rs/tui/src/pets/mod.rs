@@ -144,6 +144,12 @@ pub(crate) struct PetImageRenderState {
     last_kitty_image_id: Option<u32>,
 }
 
+impl PetImageRenderState {
+    pub(crate) fn force_next_draw(&mut self) {
+        self.last_draw_key = None;
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PetImageDrawKey {
     frame: PathBuf,
@@ -447,6 +453,32 @@ mod tests {
             "expected identical redraw to emit no terminal bytes, got {:?}",
             String::from_utf8_lossy(&output)
         );
+    }
+
+    #[test]
+    fn kitty_pet_image_forced_redraw_bypasses_identical_dedupe() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = dir.path().join("frame.png");
+        std::fs::write(&frame, b"png").unwrap();
+        let request = kitty_request(frame);
+        let mut output = Vec::new();
+        let mut state = PetImageRenderState::default();
+
+        render_ambient_pet_image(&mut output, &mut state, Some(request.clone())).unwrap();
+        output.clear();
+        render_ambient_pet_image(&mut output, &mut state, Some(request.clone())).unwrap();
+        assert!(
+            output.is_empty(),
+            "expected identical redraw to be skipped before forcing"
+        );
+
+        state.force_next_draw();
+        render_ambient_pet_image(&mut output, &mut state, Some(request)).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("a=T,t=d,f=100,c=4,r=5,q=2,i=49375,m=0;"));
+        assert!(output.contains("Ga=d,d=i,i=49374,q=2;"));
+        assert!(output.contains("cG5n"));
     }
 
     #[test]

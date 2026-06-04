@@ -932,11 +932,15 @@ impl Tui {
                 }
             }
 
+            let flushed_history_lines = !self.pending_history_lines.is_empty();
             Self::flush_pending_history_lines(
                 terminal,
                 &mut self.pending_history_lines,
                 self.is_zellij,
             )?;
+            if flushed_history_lines {
+                self.ambient_pet_image_state.force_next_draw();
+            }
 
             // Update the y position for suspending so Ctrl-Z can place the cursor correctly.
             #[cfg(unix)]
