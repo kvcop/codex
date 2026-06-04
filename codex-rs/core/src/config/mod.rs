@@ -750,6 +750,12 @@ pub struct Config {
     /// Pet id preselected by the terminal pet picker.
     pub tui_pet: Option<String>,
 
+    /// Pet ids marked as favorites in the terminal pet picker.
+    pub tui_pet_favorites: Vec<String>,
+
+    /// Whether the TUI should choose a random favorite pet at startup.
+    pub tui_pet_random_favorite: bool,
+
     /// Vertical anchor used by terminal pet rendering.
     pub tui_pet_anchor: TuiPetAnchor,
 
@@ -3610,6 +3616,16 @@ impl Config {
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
             tui_pet: cfg.tui.as_ref().and_then(|t| t.pet.clone()),
+            tui_pet_favorites: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.pet_favorites.clone())
+                .unwrap_or_default(),
+            tui_pet_random_favorite: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.pet_random_favorite)
+                .unwrap_or(false),
             tui_pet_anchor: cfg
                 .tui
                 .as_ref()

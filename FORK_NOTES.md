@@ -83,3 +83,30 @@ conflict with future upstream merges or need manual retesting after an update.
   - image survives normal TUI redraws;
   - resize behavior is acceptable or at least fails visibly;
   - `TMUX_PANE` without `TMUX` still uses tmux passthrough wrapping.
+
+## TUI Pet Favorites
+
+- Local `/pets` picker extension:
+  - `Space` toggles a pet as favorite without selecting it.
+  - `Enter` still selects the highlighted concrete pet.
+  - the top `Random favorite each session` row toggles startup randomization.
+- Persisted config keys:
+
+  ```toml
+  [tui]
+  pet_favorites = ["codex", "custom:chefito"]
+  pet_random_favorite = true
+  ```
+
+- Startup behavior:
+  - when `pet_random_favorite` is true and favorites are present, Codex picks a
+    fresh random favorite during TUI startup;
+  - `tui.pet = "disabled"` has priority over random favorites;
+  - the random choice is kept in memory for that process and does not rewrite
+    `config.toml` on every start.
+- Retest after upstream merges:
+  - `/pets` opens with the random row and favorite checkboxes;
+  - `Space` persists `pet_favorites`;
+  - random startup picks from favorites;
+  - disabling pets still prevents startup rendering even when random mode is
+    enabled.

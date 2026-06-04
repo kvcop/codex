@@ -719,6 +719,18 @@ pub struct Tui {
     #[serde(default)]
     pub pet: Option<String>,
 
+    /// Pet ids marked as favorites in the terminal pet picker.
+    ///
+    /// Custom pet ids use the `custom:<pet-id>` selector.
+    #[serde(default)]
+    pub pet_favorites: Vec<String>,
+
+    /// Select a random favorite pet each time the TUI starts.
+    ///
+    /// Ignored when `pet_favorites` is empty.
+    #[serde(default)]
+    pub pet_random_favorite: bool,
+
     /// Where the terminal pet should anchor vertically.
     ///
     /// Defaults to `composer`, which follows the current TUI composer viewport.

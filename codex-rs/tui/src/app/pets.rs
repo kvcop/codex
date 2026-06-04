@@ -120,6 +120,45 @@ impl App {
         }
     }
 
+    pub(super) async fn handle_pet_favorite_toggled(&mut self, pet_id: String, is_favorite: bool) {
+        let mut favorites = self.config.tui_pet_favorites.clone();
+        if is_favorite {
+            if !favorites.contains(&pet_id) {
+                favorites.push(pet_id);
+            }
+        } else {
+            favorites.retain(|favorite| favorite != &pet_id);
+        }
+
+        let edit = crate::legacy_core::config::edit::tui_pet_favorites_edit(&favorites);
+        let apply_result = ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_edits([edit])
+            .apply()
+            .await;
+        match apply_result {
+            Ok(()) => self.sync_tui_pet_favorites(favorites),
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to save pet favorites: {err}"));
+            }
+        }
+    }
+
+    pub(super) async fn handle_pet_random_favorite_toggled(&mut self, enabled: bool) {
+        let edit = crate::legacy_core::config::edit::tui_pet_random_favorite_edit(enabled);
+        let apply_result = ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_edits([edit])
+            .apply()
+            .await;
+        match apply_result {
+            Ok(()) => self.sync_tui_pet_random_favorite(enabled),
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to save random pet mode: {err}"));
+            }
+        }
+    }
+
     pub(super) fn handle_pet_preview_loaded(
         &mut self,
         tui: &mut tui::Tui,
@@ -178,7 +217,19 @@ impl App {
         pet_id: String,
         result: Result<Option<crate::pets::AmbientPet>, String>,
     ) {
-        if self.config.tui_pet.as_deref() != Some(pet_id.as_str()) {
+        if self.config.tui_pet.as_deref() == Some(crate::pets::DISABLED_PET_ID) {
+            return;
+        }
+
+        let expected_pet = if self.config.tui_pet_random_favorite {
+            self.config
+                .tui_pet_favorites
+                .iter()
+                .any(|favorite| favorite == &pet_id)
+        } else {
+            self.config.tui_pet.as_deref() == Some(pet_id.as_str())
+        };
+        if !expected_pet {
             return;
         }
 

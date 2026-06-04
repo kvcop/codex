@@ -763,6 +763,16 @@ impl App {
         self.chat_widget.set_tui_pet(Some(pet));
     }
 
+    pub(super) fn sync_tui_pet_favorites(&mut self, favorites: Vec<String>) {
+        self.config.tui_pet_favorites = favorites.clone();
+        self.chat_widget.set_tui_pet_favorites(favorites);
+    }
+
+    pub(super) fn sync_tui_pet_random_favorite(&mut self, enabled: bool) {
+        self.config.tui_pet_random_favorite = enabled;
+        self.chat_widget.set_tui_pet_random_favorite(enabled);
+    }
+
     pub(super) fn restore_runtime_theme_from_config(&self) {
         if let Some(name) = self.config.tui_theme.as_deref()
             && let Some(theme) =
@@ -1320,5 +1330,28 @@ terminal_resize_reflow_max_rows = 9000
             app.chat_widget.config_ref().tui_pet.as_deref(),
             Some(crate::pets::DISABLED_PET_ID)
         );
+    }
+
+    #[tokio::test]
+    async fn sync_tui_pet_favorites_updates_chat_widget_config_copy() {
+        let mut app = make_test_app().await;
+
+        app.sync_tui_pet_favorites(vec!["codex".to_string(), "dewey".to_string()]);
+
+        assert_eq!(app.config.tui_pet_favorites, ["codex", "dewey"]);
+        assert_eq!(
+            app.chat_widget.config_ref().tui_pet_favorites,
+            ["codex", "dewey"]
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_tui_pet_random_favorite_updates_chat_widget_config_copy() {
+        let mut app = make_test_app().await;
+
+        app.sync_tui_pet_random_favorite(/*enabled*/ true);
+
+        assert!(app.config.tui_pet_random_favorite);
+        assert!(app.chat_widget.config_ref().tui_pet_random_favorite);
     }
 }

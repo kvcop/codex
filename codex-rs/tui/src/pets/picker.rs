@@ -10,9 +10,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use ratatui::style::Stylize;
+
 use crate::app_event::AppEvent;
 use crate::bottom_pane::SelectionAction;
 use crate::bottom_pane::SelectionItem;
+use crate::bottom_pane::SelectionToggle;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::SideContentWidth;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
@@ -45,10 +48,13 @@ struct PetPickerEntry {
 /// selection-specific event wiring.
 pub(crate) fn build_pet_picker_params(
     current_pet: Option<&str>,
+    pet_favorites: &[String],
+    pet_random_favorite: bool,
     codex_home: &Path,
     preview_state: PetPickerPreviewState,
 ) -> SelectionViewParams {
     let preferred_pet = current_pet.unwrap_or(DEFAULT_PET_ID);
+    let random_mode_active = pet_random_favorite && current_pet != Some(DISABLED_PET_ID);
     let mut entries = available_pet_entries(codex_home);
     entries.sort_by(|left, right| left.display_name.cmp(&right.display_name));
     if let Some(disabled_idx) = entries
@@ -59,14 +65,12 @@ pub(crate) fn build_pet_picker_params(
         entries.insert(0, disabled_entry);
     }
 
-    let mut initial_selected_idx = None;
-    let preview_pet_ids = entries
-        .iter()
-        .map(|entry| entry.selector.clone())
-        .collect::<Vec<_>>();
+    let mut initial_selected_idx = random_mode_active.then_some(0);
+    let mut preview_pet_ids: Vec<Option<String>> = vec![None];
+    preview_pet_ids.extend(entries.iter().map(|entry| Some(entry.selector.clone())));
     let on_selection_changed: crate::bottom_pane::OnSelectionChangedCallback = Some(Box::new(
         move |idx: usize, tx: &crate::app_event_sender::AppEventSender| {
-            if let Some(pet_id) = preview_pet_ids.get(idx) {
+            if let Some(pet_id) = preview_pet_ids.get(idx).and_then(Option::as_ref) {
                 tx.send(AppEvent::PetPreviewRequested {
                     pet_id: pet_id.clone(),
                 });
@@ -74,52 +78,89 @@ pub(crate) fn build_pet_picker_params(
         },
     ));
 
-    let items = entries
-        .into_iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let is_current = current_pet.is_some_and(|current_pet| {
-                current_pet == entry.selector
-                    || entry.legacy_selector.as_deref() == Some(current_pet)
-            });
-            if preferred_pet == entry.selector
-                || entry.legacy_selector.as_deref() == Some(preferred_pet)
-            {
-                initial_selected_idx = Some(idx);
-            }
-            let pet_id = entry.selector.clone();
-            let search_value = if pet_id == DISABLED_PET_ID {
-                "disable disabled hide hidden off none".to_string()
-            } else {
-                entry.selector
-            };
-            let actions: Vec<SelectionAction> = if pet_id == DISABLED_PET_ID {
-                vec![Box::new(|tx| {
-                    tx.send(AppEvent::PetDisabled);
-                })]
-            } else {
-                vec![Box::new(move |tx| {
-                    tx.send(AppEvent::PetSelected {
-                        pet_id: pet_id.clone(),
-                    });
-                })]
-            };
-            SelectionItem {
-                name: entry.display_name,
-                description: entry.description,
-                is_current,
-                dismiss_on_select: true,
-                search_value: Some(search_value),
-                actions,
-                ..Default::default()
-            }
-        })
-        .collect();
+    let mut items = vec![SelectionItem {
+        name: "Random favorite each session".to_string(),
+        description: Some("Choose a fresh favorite pet when Codex starts".to_string()),
+        selected_description: Some("Space toggles random startup pet selection".to_string()),
+        is_current: random_mode_active,
+        toggle: Some(SelectionToggle {
+            is_on: pet_random_favorite,
+            action: Box::new(|enabled, tx| {
+                tx.send(AppEvent::PetRandomFavoriteToggled { enabled });
+            }),
+        }),
+        dismiss_on_select: false,
+        search_value: Some("random favorite favorites session startup".to_string()),
+        ..Default::default()
+    }];
+    items.extend(
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                let is_current = current_pet.is_some_and(|current_pet| {
+                    current_pet == entry.selector
+                        || entry.legacy_selector.as_deref() == Some(current_pet)
+                });
+                if preferred_pet == entry.selector
+                    || entry.legacy_selector.as_deref() == Some(preferred_pet)
+                {
+                    initial_selected_idx.get_or_insert(idx + 1);
+                }
+                let pet_id = entry.selector.clone();
+                let search_value = if pet_id == DISABLED_PET_ID {
+                    "disable disabled hide hidden off none".to_string()
+                } else {
+                    entry.selector
+                };
+                let is_disabled_entry = pet_id == DISABLED_PET_ID;
+                let is_favorite = pet_favorites.iter().any(|favorite| {
+                    favorite == &pet_id
+                        || entry.legacy_selector.as_deref() == Some(favorite.as_str())
+                });
+                let toggle = (!is_disabled_entry).then(|| {
+                    let pet_id = pet_id.clone();
+                    SelectionToggle {
+                        is_on: is_favorite,
+                        action: Box::new(move |is_favorite, tx| {
+                            tx.send(AppEvent::PetFavoriteToggled {
+                                pet_id: pet_id.clone(),
+                                is_favorite,
+                            });
+                        }),
+                    }
+                });
+                let actions: Vec<SelectionAction> = if pet_id == DISABLED_PET_ID {
+                    vec![Box::new(|tx| {
+                        tx.send(AppEvent::PetDisabled);
+                    })]
+                } else {
+                    vec![Box::new(move |tx| {
+                        tx.send(AppEvent::PetSelected {
+                            pet_id: pet_id.clone(),
+                        });
+                    })]
+                };
+                SelectionItem {
+                    name: entry.display_name,
+                    description: entry.description,
+                    is_current,
+                    toggle,
+                    toggle_placeholder: is_disabled_entry.then_some("    "),
+                    dismiss_on_select: true,
+                    search_value: Some(search_value),
+                    actions,
+                    ..Default::default()
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
 
     SelectionViewParams {
         view_id: Some(PET_PICKER_VIEW_ID),
         title: Some("Select Pet".to_string()),
         subtitle: Some("Choose a pet to wake in the terminal.".to_string()),
+        footer_note: Some("Space toggles favorites; Enter selects.".dim().into()),
         footer_hint: Some(standard_popup_hint_line()),
         items,
         is_searchable: true,
@@ -239,6 +280,8 @@ mod tests {
 
         let params = build_pet_picker_params(
             Some("chefito"),
+            &[],
+            /*pet_random_favorite*/ false,
             codex_home.path(),
             PetPickerPreviewState::default(),
         );
@@ -250,6 +293,7 @@ mod tests {
                 .map(|item| item.name.as_str())
                 .collect::<Vec<_>>(),
             vec![
+                "Random favorite each session",
                 "Disable terminal pets",
                 "BSOD",
                 "Chefito",
@@ -262,9 +306,9 @@ mod tests {
                 "Stacky",
             ],
         );
-        assert_eq!(params.initial_selected_idx, Some(2));
+        assert_eq!(params.initial_selected_idx, Some(3));
         assert_eq!(
-            params.items[2].search_value.as_deref(),
+            params.items[3].search_value.as_deref(),
             Some("custom:chefito")
         );
     }
@@ -274,13 +318,15 @@ mod tests {
         let codex_home = tempfile::tempdir().unwrap();
         let params = build_pet_picker_params(
             /*current_pet*/ None,
+            &[],
+            /*pet_random_favorite*/ false,
             codex_home.path(),
             PetPickerPreviewState::default(),
         );
 
-        assert_eq!(params.initial_selected_idx, Some(2));
-        assert_eq!(params.items[2].name, "Codex");
-        assert!(!params.items[2].is_current);
+        assert_eq!(params.initial_selected_idx, Some(3));
+        assert_eq!(params.items[3].name, "Codex");
+        assert!(!params.items[3].is_current);
     }
 
     #[test]
@@ -288,16 +334,18 @@ mod tests {
         let codex_home = tempfile::tempdir().unwrap();
         let params = build_pet_picker_params(
             Some(DISABLED_PET_ID),
+            &[],
+            /*pet_random_favorite*/ false,
             codex_home.path(),
             PetPickerPreviewState::default(),
         );
 
-        assert_eq!(params.initial_selected_idx, Some(0));
-        assert_eq!(params.items[0].name, "Disable terminal pets");
-        assert_eq!(params.items[0].description, None);
-        assert!(params.items[0].is_current);
+        assert_eq!(params.initial_selected_idx, Some(1));
+        assert_eq!(params.items[1].name, "Disable terminal pets");
+        assert_eq!(params.items[1].description, None);
+        assert!(params.items[1].is_current);
         assert_eq!(
-            params.items[0].search_value.as_deref(),
+            params.items[1].search_value.as_deref(),
             Some("disable disabled hide hidden off none")
         );
     }
@@ -309,6 +357,8 @@ mod tests {
 
         let params = build_pet_picker_params(
             Some("custom:legacy"),
+            &[],
+            /*pet_random_favorite*/ false,
             codex_home.path(),
             PetPickerPreviewState::default(),
         );
@@ -320,5 +370,32 @@ mod tests {
 
         assert!(legacy.is_current);
         assert_eq!(legacy.search_value.as_deref(), Some("custom:legacy"));
+    }
+
+    #[test]
+    fn picker_marks_favorites_and_random_mode() {
+        let codex_home = tempfile::tempdir().unwrap();
+        let params = build_pet_picker_params(
+            Some("codex"),
+            &["codex".to_string()],
+            /*pet_random_favorite*/ true,
+            codex_home.path(),
+            PetPickerPreviewState::default(),
+        );
+
+        assert_eq!(params.initial_selected_idx, Some(0));
+        assert!(params.items[0].is_current);
+        assert!(
+            params.items[0]
+                .toggle
+                .as_ref()
+                .is_some_and(|toggle| toggle.is_on)
+        );
+        let codex = params
+            .items
+            .iter()
+            .find(|item| item.name == "Codex")
+            .unwrap();
+        assert!(codex.toggle.as_ref().is_some_and(|toggle| toggle.is_on));
     }
 }

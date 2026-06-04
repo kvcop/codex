@@ -7,13 +7,13 @@ pub(super) fn load_ambient_pet(
     config: &Config,
     frame_requester: FrameRequester,
 ) -> Option<crate::pets::AmbientPet> {
-    let selected_pet = config.tui_pet.as_deref()?;
+    let selected_pet = startup_pet_id(config)?;
     if selected_pet == crate::pets::DISABLED_PET_ID {
         return None;
     }
 
     crate::pets::AmbientPet::load(
-        Some(selected_pet),
+        Some(&selected_pet),
         &config.codex_home,
         frame_requester,
         config.animations,
@@ -27,7 +27,7 @@ pub(super) fn start_configured_pet_load_if_needed(
     frame_requester: FrameRequester,
     app_event_tx: AppEventSender,
 ) {
-    let Some(pet_id) = config.tui_pet.clone() else {
+    let Some(pet_id) = startup_pet_id(config) else {
         return;
     };
     if pet_id == crate::pets::DISABLED_PET_ID || !ambient_pet_missing {
@@ -50,6 +50,50 @@ pub(super) fn start_configured_pet_load_if_needed(
             .map_err(|err| err.to_string());
         app_event_tx.send(AppEvent::ConfiguredPetLoaded { pet_id, result });
     });
+}
+
+fn startup_pet_id(config: &Config) -> Option<String> {
+    if config.tui_pet.as_deref() == Some(crate::pets::DISABLED_PET_ID) {
+        return config.tui_pet.clone();
+    }
+
+    if config.tui_pet_random_favorite
+        && let Some(pet_id) =
+            random_favorite_pet_id(&config.tui_pet_favorites, config.tui_pet.as_deref())
+    {
+        return Some(pet_id);
+    }
+
+    config.tui_pet.clone()
+}
+
+fn random_favorite_pet_id(favorites: &[String], avoid_pet: Option<&str>) -> Option<String> {
+    let favorites = favorites
+        .iter()
+        .filter(|pet_id| pet_id.as_str() != crate::pets::DISABLED_PET_ID)
+        .collect::<Vec<_>>();
+    if favorites.is_empty() {
+        return None;
+    }
+
+    let candidates = if favorites.len() > 1 {
+        let candidates = favorites
+            .iter()
+            .copied()
+            .filter(|pet_id| avoid_pet != Some(pet_id.as_str()))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            favorites
+        } else {
+            candidates
+        }
+    } else {
+        favorites
+    };
+
+    let mut rng = rand::rng();
+    let idx = rng.random_range(0..candidates.len());
+    Some(candidates[idx].clone())
 }
 
 impl ChatWidget {
@@ -140,6 +184,8 @@ impl ChatWidget {
         self.pet_picker_preview_pet = None;
         let params = crate::pets::build_pet_picker_params(
             self.config.tui_pet.as_deref(),
+            &self.config.tui_pet_favorites,
+            self.config.tui_pet_random_favorite,
             &self.config.codex_home,
             self.pet_picker_preview_state.clone(),
         );
@@ -202,6 +248,16 @@ impl ChatWidget {
         self.config.tui_pet = pet;
         self.ambient_pet = ambient_pet;
         self.apply_ambient_pet_image_support_override_for_tests();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_tui_pet_favorites(&mut self, favorites: Vec<String>) {
+        self.config.tui_pet_favorites = favorites;
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_tui_pet_random_favorite(&mut self, enabled: bool) {
+        self.config.tui_pet_random_favorite = enabled;
         self.request_redraw();
     }
 
@@ -331,5 +387,26 @@ fn spawn_pet_load(f: impl FnOnce() + Send + 'static) {
         std::mem::drop(handle.spawn_blocking(f));
     } else {
         let _ = std::thread::spawn(f);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn random_favorite_ignores_disabled_pet() {
+        assert_eq!(
+            random_favorite_pet_id(&[crate::pets::DISABLED_PET_ID.to_string()], None),
+            None
+        );
+    }
+
+    #[test]
+    fn random_favorite_avoids_configured_pet_when_possible() {
+        assert_eq!(
+            random_favorite_pet_id(&["codex".to_string(), "dewey".to_string()], Some("codex")),
+            Some("dewey".to_string())
+        );
     }
 }

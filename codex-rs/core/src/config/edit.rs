@@ -98,6 +98,24 @@ pub fn tui_pet_edit(name: &str) -> ConfigEdit {
     }
 }
 
+/// Produces a config edit that sets `[tui].pet_favorites`.
+pub fn tui_pet_favorites_edit(favorites: &[String]) -> ConfigEdit {
+    let array = favorites.iter().cloned().collect::<toml_edit::Array>();
+
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "pet_favorites".to_string()],
+        value: TomlItem::Value(array.into()),
+    }
+}
+
+/// Produces a config edit that sets `[tui].pet_random_favorite`.
+pub fn tui_pet_random_favorite_edit(enabled: bool) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "pet_random_favorite".to_string()],
+        value: value(enabled),
+    }
+}
+
 /// Produces a config edit that sets `[tui].session_picker_view = "<mode>"`.
 pub fn session_picker_view_edit(mode: SessionPickerViewMode) -> ConfigEdit {
     ConfigEdit::SetPath {

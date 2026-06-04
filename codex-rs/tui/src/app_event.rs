@@ -338,6 +338,17 @@ pub(crate) enum AppEvent {
     /// Persist terminal pets as disabled and remove the ambient pet.
     PetDisabled,
 
+    /// Persist a favorite toggle from the terminal pet picker.
+    PetFavoriteToggled {
+        pet_id: String,
+        is_favorite: bool,
+    },
+
+    /// Persist whether startup should choose a random favorite pet.
+    PetRandomFavoriteToggled {
+        enabled: bool,
+    },
+
     /// Start loading the side preview for the pet picker.
     PetPreviewRequested {
         pet_id: String,

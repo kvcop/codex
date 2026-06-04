@@ -409,6 +409,15 @@ impl App {
             AppEvent::PetDisabled => {
                 self.handle_pet_disabled(tui).await;
             }
+            AppEvent::PetFavoriteToggled {
+                pet_id,
+                is_favorite,
+            } => {
+                self.handle_pet_favorite_toggled(pet_id, is_favorite).await;
+            }
+            AppEvent::PetRandomFavoriteToggled { enabled } => {
+                self.handle_pet_random_favorite_toggled(enabled).await;
+            }
             AppEvent::PetPreviewRequested { pet_id } => {
                 self.chat_widget.start_pet_picker_preview(pet_id);
             }

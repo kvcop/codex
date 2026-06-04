@@ -640,6 +640,8 @@ fn config_toml_deserializes_model_availability_nux() {
             terminal_title: None,
             theme: None,
             pet: None,
+            pet_favorites: Vec::new(),
+            pet_random_favorite: false,
             pet_anchor: TuiPetAnchor::Composer,
             session_picker_view: None,
             keymap: TuiKeymap::default(),
@@ -3324,6 +3326,32 @@ fn tui_pet_defaults_to_none() {
 }
 
 #[test]
+fn tui_pet_favorites_deserializes_from_toml() {
+    let cfg = r#"
+[tui]
+pet_favorites = ["codex", "custom:chefito"]
+pet_random_favorite = true
+"#;
+    let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
+    let tui = parsed.tui.as_ref().expect("tui config");
+
+    assert_eq!(tui.pet_favorites, ["codex", "custom:chefito"]);
+    assert!(tui.pet_random_favorite);
+}
+
+#[test]
+fn tui_pet_favorites_defaults_to_empty_and_random_disabled() {
+    let cfg = r#"
+[tui]
+"#;
+    let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
+    let tui = parsed.tui.as_ref().expect("tui config");
+
+    assert!(tui.pet_favorites.is_empty());
+    assert!(!tui.pet_random_favorite);
+}
+
+#[test]
 fn tui_pet_anchor_deserializes_from_toml() {
     let cfg = r#"
 [tui]
@@ -3388,6 +3416,8 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             terminal_title: None,
             theme: None,
             pet: None,
+            pet_favorites: Vec::new(),
+            pet_random_favorite: false,
             pet_anchor: TuiPetAnchor::Composer,
             session_picker_view: None,
             keymap: TuiKeymap::default(),
