@@ -28,6 +28,9 @@
 - Phase 3 переводит Kitty на placement-aware path: текущий `delete + retransmit`
   заменяется на показ нового placement/frame до удаления старого placement.
 - Sixel остается отдельным clear/redraw path.
+- Бесшовный image renderer является prerequisite для будущего движения пета:
+  иначе любые "подбежал к слову" или screensaver-анимации будут умножать
+  flicker вместо того, чтобы выглядеть живыми.
 
 **Known architectural risks:**
 - Kitty graphics в tmux остаются unsafe-экспериментом: passthrough может
@@ -73,6 +76,13 @@
     wrapper.
   - `codex-rs/tui/src/pets/ambient.rs`: `AmbientPetDraw`, frame selection,
     animation timing.
+  - `codex-rs/tui/src/chatwidget/rendering.rs`: `ChatWidget` собирает ratatui
+    buffer из active transcript cell и bottom pane; это главный слой, где можно
+    в будущем вычислять занятые/пустые cells внутри Codex-owned viewport.
+  - `codex-rs/tui/src/bottom_pane/chat_composer.rs` и
+    `codex-rs/tui/src/bottom_pane/textarea.rs`: composer знает wrapped lines,
+    desired height и cursor position, поэтому к области ввода можно привязывать
+    будущие pet movement anchors.
   - `codex-rs/tui/src/chatwidget/tests/status_and_layout.rs`: layout coverage
     для ambient pet.
   - `FORK_NOTES.md`: обновить после принятой реализации, не во время
@@ -281,6 +291,10 @@ context.
 - **API/CLI/UI compatibility:** no public CLI/config changes planned.
 - **Terminal compatibility:** Kitty path changes only when Kitty protocol is
   selected; Sixel keeps its current behavior.
+- **Terminal ownership:** Codex надежно знает только свой текущий rendered
+  viewport/buffer и собственные transcript/composer модели. Произвольный
+  внешний scrollback терминала выше Codex viewport не должен считаться
+  доступным полем для pet movement.
 
 ### Логи и наблюдаемость
 
@@ -312,6 +326,19 @@ context.
 - Real pet movement across the terminal. Promotion trigger: after flicker is
   acceptable, create a follow-up plan for movement state, collision/anchor
   rules, and redraw scheduling.
+  - **Composer curiosity mode:** while the user is typing a multiline prompt,
+    the pet may move to an already stable wrapped line, inspect a word, then
+    "panic/escape" back to its home anchor when the message is submitted.
+    Implementation must anchor to composer layout, not absolute terminal rows,
+    because the input area grows upward as lines wrap.
+  - **Transcript screensaver mode:** after a long idle period, the pet may
+    search the Codex-owned visible buffer for blank rectangles to the right of
+    short rendered rows, then run small idle actions there. It must avoid
+    composer, status/footer rows, popups, active selections, and any row whose
+    text can still reflow under streaming/resize.
+  - **Letter interaction sketches:** future animations may pick up, rotate, or
+    return a rendered letter, but this requires a separate safety contract for
+    restoring text cells exactly and should not be mixed into the flicker fix.
 - Text bubble/notification labels. Promotion trigger: user asks to show pet
   status text in the CLI.
 - Terminal-side Kitty animation protocol (`a=f`, `a=c`, `a=a`). Promotion
@@ -328,6 +355,11 @@ context.
   **Mitigation:** Phase 3 fallback to Phase 2; no blocking terminal ack parsing.
 - **Risk:** Sixel behavior regresses.
   **Mitigation:** keep Sixel path separate and covered by existing tests.
+- **Risk:** future movement overwrites user-visible text or fights with
+  streaming reflow.
+  **Mitigation:** keep movement out of this plan; only promote it after the
+  renderer is stable, and restrict first prototypes to Codex-owned blank cells
+  discovered from the rendered buffer.
 
 ### Execution
 
@@ -346,6 +378,9 @@ context.
   not a config flag.
 - Should debug builds be copied into fish-selected release path during testing?
   Default: no; run `target/debug/codex` directly for each manual gate.
+- Should future pet movement be always-on or a separate opt-in config? Default:
+  separate opt-in until it survives composer, resize, streaming, tmux and SSH
+  manual checks.
 
 ## Machine Appendix
 
@@ -355,5 +390,9 @@ context.
   (`0xC0DF`), so every animation frame currently reuses the same id.
 - Current `kitty_delete_image()` uses `d=I`, which frees image data as well as
   placements. That is hostile to flicker-free animation.
+- Codex does not own arbitrary terminal scrollback as a queryable layout model.
+  It does own the ratatui buffer for the current viewport during render, plus
+  transcript/composer state. Future movement should derive candidate positions
+  from those sources, not from reading terminal history back.
 - Avoid putting this plan in `FORK_NOTES.md`; that file is for accepted local
   deltas and retest notes, not pending design.
