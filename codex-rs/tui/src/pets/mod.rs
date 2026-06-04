@@ -103,7 +103,7 @@ pub(crate) fn render_ambient_pet_image(
     state: &mut PetImageRenderState,
     request: Option<AmbientPetDraw>,
 ) -> std::result::Result<(), PetImageRenderError> {
-    render_pet_image(writer, state, /*image_id*/ 0xC0DE, request)
+    render_pet_image(writer, state, AMBIENT_PET_IMAGE_IDS, request)
 }
 
 pub(crate) fn render_pet_picker_preview_image(
@@ -111,7 +111,29 @@ pub(crate) fn render_pet_picker_preview_image(
     state: &mut PetImageRenderState,
     request: Option<AmbientPetDraw>,
 ) -> std::result::Result<(), PetImageRenderError> {
-    render_pet_image(writer, state, /*image_id*/ 0xC0DF, request)
+    render_pet_image(writer, state, PET_PICKER_PREVIEW_IMAGE_IDS, request)
+}
+
+const AMBIENT_PET_IMAGE_IDS: PetImageIds = PetImageIds::new(0xC0DE);
+const PET_PICKER_PREVIEW_IMAGE_IDS: PetImageIds = PetImageIds::new(0xC1DE);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PetImageIds {
+    primary: u32,
+    alternate: u32,
+}
+
+impl PetImageIds {
+    const fn new(primary: u32) -> Self {
+        Self {
+            primary,
+            alternate: primary + 1,
+        }
+    }
+
+    fn all(self) -> [u32; 2] {
+        [self.primary, self.alternate]
+    }
 }
 
 #[derive(Debug, Default)]
@@ -119,6 +141,7 @@ pub(crate) struct PetImageRenderState {
     last_sixel_clear_area: Option<SixelClearArea>,
     last_protocol: Option<image_protocol::ImageProtocol>,
     last_draw_key: Option<PetImageDrawKey>,
+    last_kitty_image_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,7 +176,7 @@ impl From<&AmbientPetDraw> for PetImageDrawKey {
 fn render_pet_image(
     writer: &mut impl Write,
     state: &mut PetImageRenderState,
-    image_id: u32,
+    image_ids: PetImageIds,
     request: Option<AmbientPetDraw>,
 ) -> std::result::Result<(), PetImageRenderError> {
     use crossterm::cursor::MoveTo;
@@ -164,8 +187,12 @@ fn render_pet_image(
 
     let Some(request) = request else {
         state.last_draw_key = None;
-        if state.last_protocol.take().is_some_and(is_kitty_protocol) {
-            write!(writer, "{}", image_protocol::kitty_delete_image(image_id))?;
+        let had_kitty_protocol = state.last_protocol.take().is_some_and(is_kitty_protocol);
+        let had_kitty_image = state.last_kitty_image_id.take().is_some();
+        if had_kitty_protocol || had_kitty_image {
+            for image_id in image_ids.all() {
+                write!(writer, "{}", image_protocol::kitty_delete_image(image_id))?;
+            }
         }
         if let Some(area) = state.last_sixel_clear_area.take() {
             queue!(writer, SavePosition)?;
@@ -177,28 +204,30 @@ fn render_pet_image(
     };
 
     let draw_key = PetImageDrawKey::from(&request);
-    if is_kitty_protocol(request.protocol)
+    let request_is_kitty = is_kitty_protocol(request.protocol);
+    if request_is_kitty
         && state.last_protocol == Some(request.protocol)
         && state.last_draw_key.as_ref() == Some(&draw_key)
     {
         return Ok(());
     }
 
-    if state.last_protocol.take().is_some_and(is_kitty_protocol)
-        || is_kitty_protocol(request.protocol)
-    {
-        state.last_draw_key = None;
-        write!(writer, "{}", image_protocol::kitty_delete_image(image_id))?;
-    }
-    state.last_protocol = Some(request.protocol);
-
+    let next_kitty_image_id = if request_is_kitty {
+        Some(match state.last_kitty_image_id {
+            Some(previous) if previous == image_ids.primary => image_ids.alternate,
+            Some(previous) if previous == image_ids.alternate => image_ids.primary,
+            Some(_) | None => image_ids.primary,
+        })
+    } else {
+        None
+    };
     let payload = match request.protocol {
         ImageProtocol::Kitty => AmbientPetPayload::Text(
             image_protocol::kitty_transmit_png_with_id(
                 &request.frame,
                 request.columns,
                 request.rows,
-                Some(image_id),
+                next_kitty_image_id,
             )
             .map_err(PetImageRenderError::Asset)?,
         ),
@@ -207,7 +236,7 @@ fn render_pet_image(
                 &request.frame,
                 request.columns,
                 request.rows,
-                Some(image_id),
+                next_kitty_image_id,
             )
             .map_err(PetImageRenderError::Asset)?,
         ),
@@ -221,6 +250,22 @@ fn render_pet_image(
             AmbientPetPayload::Bytes(sixel)
         }
     };
+
+    let previous_protocol_was_kitty = state.last_protocol.is_some_and(is_kitty_protocol);
+    let previous_kitty_image_id = state.last_kitty_image_id;
+    let pre_draw_delete_kitty = previous_protocol_was_kitty && !request_is_kitty;
+    let post_draw_delete_kitty_image_id = if request_is_kitty {
+        previous_kitty_image_id.filter(|previous| Some(*previous) != next_kitty_image_id)
+    } else {
+        None
+    };
+
+    if pre_draw_delete_kitty {
+        state.last_draw_key = None;
+        for image_id in image_ids.all() {
+            write!(writer, "{}", image_protocol::kitty_delete_image(image_id))?;
+        }
+    }
 
     queue!(writer, SavePosition)?;
     let current_sixel_clear_area = if matches!(request.protocol, ImageProtocol::Sixel) {
@@ -242,9 +287,18 @@ fn render_pet_image(
         AmbientPetPayload::Text(payload) => write!(writer, "{payload}")?,
         AmbientPetPayload::Bytes(payload) => writer.write_all(&payload)?,
     }
+    if let Some(image_id) = post_draw_delete_kitty_image_id {
+        write!(
+            writer,
+            "{}",
+            image_protocol::kitty_delete_image_preserving_data(image_id)
+        )?;
+    }
     queue!(writer, RestorePosition)?;
     writer.flush()?;
+    state.last_protocol = Some(request.protocol);
     state.last_draw_key = Some(draw_key);
+    state.last_kitty_image_id = next_kitty_image_id;
     Ok(())
 }
 
@@ -412,8 +466,38 @@ mod tests {
             .unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Ga=d,d=I,i=49374,q=2;"));
+        assert!(output.contains("a=T,t=d,f=100,c=4,r=5,q=2,i=49375,m=0;"));
+        assert!(output.contains("Ga=d,d=i,i=49374,q=2;"));
         assert!(output.contains("dHdv"));
+    }
+
+    #[test]
+    fn kitty_pet_image_frame_transition_draws_new_before_deleting_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_frame = dir.path().join("first.png");
+        std::fs::write(&first_frame, b"one").unwrap();
+        let second_frame = dir.path().join("second.png");
+        std::fs::write(&second_frame, b"two").unwrap();
+        let mut output = Vec::new();
+        let mut state = PetImageRenderState::default();
+
+        render_ambient_pet_image(&mut output, &mut state, Some(kitty_request(first_frame)))
+            .unwrap();
+        output.clear();
+        render_ambient_pet_image(&mut output, &mut state, Some(kitty_request(second_frame)))
+            .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let new_frame = output
+            .find("a=T,t=d,f=100,c=4,r=5,q=2,i=49375,m=0;")
+            .expect("draws the new frame using the alternate image id");
+        let old_delete = output
+            .find("Ga=d,d=i,i=49374,q=2;")
+            .expect("deletes the old image id without freeing image data");
+        assert!(new_frame < old_delete);
+        assert!(!output.contains("Ga=d,d=I,i=49374,q=2;"));
+        assert!(!output.contains("Ga=d,d=i,i=49375,q=2;"));
+        assert!(!output.contains("Ga=d,d=I,i=49375,q=2;"));
     }
 
     #[test]
@@ -439,6 +523,45 @@ mod tests {
     }
 
     #[test]
+    fn kitty_pet_image_clear_after_frame_transition_deletes_owned_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_frame = dir.path().join("first.png");
+        std::fs::write(&first_frame, b"one").unwrap();
+        let second_frame = dir.path().join("second.png");
+        std::fs::write(&second_frame, b"two").unwrap();
+        let mut output = Vec::new();
+        let mut state = PetImageRenderState::default();
+
+        render_ambient_pet_image(&mut output, &mut state, Some(kitty_request(first_frame)))
+            .unwrap();
+        render_ambient_pet_image(&mut output, &mut state, Some(kitty_request(second_frame)))
+            .unwrap();
+        output.clear();
+        render_ambient_pet_image(&mut output, &mut state, /*request*/ None).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Ga=d,d=I,i=49374,q=2;"));
+        assert!(output.contains("Ga=d,d=I,i=49375,q=2;"));
+        assert!(!output.contains("\x1b7"));
+        assert!(!output.contains("\x1b["));
+        assert!(!output.contains("\x1b8"));
+    }
+
+    #[test]
+    fn ambient_and_picker_preview_use_separate_kitty_image_ranges() {
+        assert_ne!(
+            AMBIENT_PET_IMAGE_IDS.all(),
+            PET_PICKER_PREVIEW_IMAGE_IDS.all()
+        );
+        assert!(
+            AMBIENT_PET_IMAGE_IDS
+                .all()
+                .iter()
+                .all(|id| !PET_PICKER_PREVIEW_IMAGE_IDS.all().contains(id))
+        );
+    }
+
+    #[test]
     fn kitty_local_file_pet_image_uses_file_reference_without_inline_payload() {
         let dir = tempfile::tempdir().unwrap();
         let frame = dir.path().join("frame.png");
@@ -460,7 +583,8 @@ mod tests {
         render_ambient_pet_image(&mut output, &mut state, Some(request)).unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("a=d,d=I,i=49374,q=2;"));
+        assert!(!output.contains("a=d,d=I,i=49374,q=2;"));
+        assert!(!output.contains("a=d,d=i,i=49374,q=2;"));
         assert!(output.contains("\x1b[4;3H"));
         assert!(output.contains("a=T,t=f,f=100,c=4,r=2,q=2,i=49374;"));
         assert!(!output.contains("cG5n"));
