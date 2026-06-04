@@ -14,6 +14,7 @@
 //! selection only after the load succeeds.
 
 use std::io::Write;
+use std::path::PathBuf;
 
 mod ambient;
 mod asset_pack;
@@ -117,6 +118,36 @@ pub(crate) fn render_pet_picker_preview_image(
 pub(crate) struct PetImageRenderState {
     last_sixel_clear_area: Option<SixelClearArea>,
     last_protocol: Option<image_protocol::ImageProtocol>,
+    last_draw_key: Option<PetImageDrawKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PetImageDrawKey {
+    frame: PathBuf,
+    protocol: image_protocol::ImageProtocol,
+    x: u16,
+    y: u16,
+    clear_top_y: u16,
+    columns: u16,
+    rows: u16,
+    height_px: u16,
+    sixel_dir: PathBuf,
+}
+
+impl From<&AmbientPetDraw> for PetImageDrawKey {
+    fn from(request: &AmbientPetDraw) -> Self {
+        Self {
+            frame: request.frame.clone(),
+            protocol: request.protocol,
+            x: request.x,
+            y: request.y,
+            clear_top_y: request.clear_top_y,
+            columns: request.columns,
+            rows: request.rows,
+            height_px: request.height_px,
+            sixel_dir: request.sixel_dir.clone(),
+        }
+    }
 }
 
 fn render_pet_image(
@@ -132,6 +163,7 @@ fn render_pet_image(
     use image_protocol::ImageProtocol;
 
     let Some(request) = request else {
+        state.last_draw_key = None;
         if state.last_protocol.take().is_some_and(is_kitty_protocol) {
             write!(writer, "{}", image_protocol::kitty_delete_image(image_id))?;
         }
@@ -144,9 +176,18 @@ fn render_pet_image(
         return Ok(());
     };
 
+    let draw_key = PetImageDrawKey::from(&request);
+    if is_kitty_protocol(request.protocol)
+        && state.last_protocol == Some(request.protocol)
+        && state.last_draw_key.as_ref() == Some(&draw_key)
+    {
+        return Ok(());
+    }
+
     if state.last_protocol.take().is_some_and(is_kitty_protocol)
         || is_kitty_protocol(request.protocol)
     {
+        state.last_draw_key = None;
         write!(writer, "{}", image_protocol::kitty_delete_image(image_id))?;
     }
     state.last_protocol = Some(request.protocol);
@@ -203,6 +244,7 @@ fn render_pet_image(
     }
     queue!(writer, RestorePosition)?;
     writer.flush()?;
+    state.last_draw_key = Some(draw_key);
     Ok(())
 }
 
@@ -258,6 +300,20 @@ mod tests {
     use super::image_protocol::ImageProtocol;
     use super::*;
 
+    fn kitty_request(frame: PathBuf) -> AmbientPetDraw {
+        AmbientPetDraw {
+            frame,
+            protocol: ImageProtocol::Kitty,
+            x: 2,
+            y: 3,
+            clear_top_y: 3,
+            columns: 4,
+            rows: 5,
+            height_px: 75,
+            sixel_dir: PathBuf::new(),
+        }
+    }
+
     #[test]
     fn ambient_pet_image_restores_cursor_after_drawing() {
         let dir = tempfile::tempdir().unwrap();
@@ -310,6 +366,69 @@ mod tests {
 
         render_ambient_pet_image(&mut output, &mut state, Some(request)).unwrap();
         output.clear();
+        render_ambient_pet_image(&mut output, &mut state, /*request*/ None).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Ga=d,d=I,i=49374,q=2;"));
+        assert!(!output.contains("\x1b7"));
+        assert!(!output.contains("\x1b["));
+        assert!(!output.contains("\x1b8"));
+    }
+
+    #[test]
+    fn kitty_pet_image_skips_identical_redraw() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = dir.path().join("frame.png");
+        std::fs::write(&frame, b"png").unwrap();
+        let request = kitty_request(frame);
+        let mut output = Vec::new();
+        let mut state = PetImageRenderState::default();
+
+        render_ambient_pet_image(&mut output, &mut state, Some(request.clone())).unwrap();
+        output.clear();
+        render_ambient_pet_image(&mut output, &mut state, Some(request)).unwrap();
+
+        assert!(
+            output.is_empty(),
+            "expected identical redraw to emit no terminal bytes, got {:?}",
+            String::from_utf8_lossy(&output)
+        );
+    }
+
+    #[test]
+    fn kitty_pet_image_changed_frame_still_renders() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_frame = dir.path().join("first.png");
+        std::fs::write(&first_frame, b"one").unwrap();
+        let second_frame = dir.path().join("second.png");
+        std::fs::write(&second_frame, b"two").unwrap();
+        let mut output = Vec::new();
+        let mut state = PetImageRenderState::default();
+
+        render_ambient_pet_image(&mut output, &mut state, Some(kitty_request(first_frame)))
+            .unwrap();
+        output.clear();
+        render_ambient_pet_image(&mut output, &mut state, Some(kitty_request(second_frame)))
+            .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Ga=d,d=I,i=49374,q=2;"));
+        assert!(output.contains("dHdv"));
+    }
+
+    #[test]
+    fn kitty_pet_image_clear_after_skipped_redraw_deletes_last_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = dir.path().join("frame.png");
+        std::fs::write(&frame, b"png").unwrap();
+        let request = kitty_request(frame);
+        let mut output = Vec::new();
+        let mut state = PetImageRenderState::default();
+
+        render_ambient_pet_image(&mut output, &mut state, Some(request.clone())).unwrap();
+        output.clear();
+        render_ambient_pet_image(&mut output, &mut state, Some(request)).unwrap();
+        assert!(output.is_empty());
         render_ambient_pet_image(&mut output, &mut state, /*request*/ None).unwrap();
 
         let output = String::from_utf8(output).unwrap();
