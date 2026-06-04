@@ -110,3 +110,20 @@ conflict with future upstream merges or need manual retesting after an update.
   - random startup picks from favorites;
   - disabling pets still prevents startup rendering even when random mode is
     enabled.
+
+## TUI Plan Mode Nudge
+
+- Local behavior disables the footer suggestion that appears when the draft
+  contains the standalone word `plan`:
+
+  ```text
+  Create a plan?  shift + tab use Plan mode   esc dismiss
+  ```
+
+- Purpose: avoid noisy footer churn while writing ordinary prompts that mention
+  plans. Plan mode itself remains available through the normal mode cycle and
+  `/plan`.
+- Retest after upstream merges:
+  - typing `plan` in the composer does not replace the footer with the nudge;
+  - `Shift+Tab` still cycles into Plan mode;
+  - `/plan` still switches/submits through the Plan mode path.

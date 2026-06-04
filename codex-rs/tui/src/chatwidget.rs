@@ -794,16 +794,6 @@ pub(crate) enum TurnAbortReason {
     BudgetLimited,
 }
 
-/// Returns whether `text` contains the standalone word `plan`.
-///
-/// This intentionally mirrors the App suggestion heuristic instead of trying to infer broader
-/// planning intent from substrings such as `planning`. Slash and shell drafts still match here so
-/// callers can keep lexical matching separate from presentation policy.
-fn contains_plan_keyword(text: &str) -> bool {
-    text.split(|ch: char| !ch.is_alphanumeric() && ch != '_')
-        .any(|word| word.eq_ignore_ascii_case("plan"))
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThreadItemRenderSource {
     Live,

@@ -410,26 +410,8 @@ impl ChatWidget {
     }
 
     /// Returns whether the current draft should replace the normal footer with the Plan-mode nudge.
-    ///
-    /// `ChatWidget` owns this policy because it can combine lexical draft matching with mode
-    /// availability, interaction state, and thread-scoped dismissal. `ChatComposer` only renders
-    /// the resulting visibility bit. Keeping slash and shell drafts out here avoids advertising a
-    /// mode switch while the user is intentionally composing another local command.
     pub(super) fn should_show_plan_mode_nudge(&self) -> bool {
-        let text = self.bottom_pane.composer_text();
-        let trimmed = text.trim_start();
-        self.collaboration_modes_enabled()
-            && collaboration_modes::plan_mask(self.model_catalog.as_ref()).is_some()
-            && self.active_mode_kind() != ModeKind::Plan
-            && self.bottom_pane.composer_input_enabled()
-            && !self.bottom_pane.is_task_running()
-            && self.bottom_pane.no_modal_or_popup_active()
-            && !trimmed.starts_with('/')
-            && !trimmed.starts_with('!')
-            && contains_plan_keyword(&text)
-            && !self
-                .dismissed_plan_mode_nudge_scopes
-                .contains(&self.plan_mode_nudge_scope())
+        false
     }
 
     /// Synchronizes the footer presentation with the current Plan-mode nudge policy.

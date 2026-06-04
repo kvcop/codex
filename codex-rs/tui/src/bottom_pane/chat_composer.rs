@@ -410,19 +410,6 @@ pub(crate) struct ComposerDraftSnapshot {
 
 const FOOTER_SPACING_HEIGHT: u16 = 0;
 
-/// Builds the one-line nudge that replaces the ambient footer without adding layout height.
-fn plan_mode_nudge_line() -> Line<'static> {
-    Line::from(vec![
-        "Create a plan?".magenta(),
-        "  ".into(),
-        key_hint::shift(KeyCode::Tab).into(),
-        " use Plan mode".into(),
-        "   ".into(),
-        key_hint::plain(KeyCode::Esc).into(),
-        " dismiss".into(),
-    ])
-}
-
 impl ChatComposer {
     fn slash_input(&self) -> SlashInput<'_> {
         SlashInput::new(
@@ -494,7 +481,6 @@ impl ChatComposer {
                 use_shift_enter_hint,
                 mode: FooterMode::ComposerEmpty,
                 hint_override: None,
-                plan_mode_nudge_visible: false,
                 flash: None,
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -1157,21 +1143,14 @@ impl ChatComposer {
         self.footer.hint_override = items;
     }
 
-    /// Updates whether the Plan-mode nudge replaces the ambient footer row.
-    ///
-    /// Returns `true` only when the rendered footer can change so callers can avoid scheduling
-    /// redundant redraws while reevaluating nudge policy on routine composer updates.
-    pub(crate) fn set_plan_mode_nudge_visible(&mut self, visible: bool) -> bool {
-        if self.footer.plan_mode_nudge_visible == visible {
-            return false;
-        }
-        self.footer.plan_mode_nudge_visible = visible;
-        true
+    /// Local fork disables the Plan-mode nudge while keeping Plan mode itself available.
+    pub(crate) fn set_plan_mode_nudge_visible(&mut self, _visible: bool) -> bool {
+        false
     }
 
     #[cfg(test)]
     pub(crate) fn plan_mode_nudge_visible(&self) -> bool {
-        self.footer.plan_mode_nudge_visible
+        false
     }
 
     pub(crate) fn set_remote_image_urls(&mut self, urls: Vec<String>) {
@@ -3858,7 +3837,6 @@ impl ChatComposer {
         self.footer.quit_shortcut_expires_at = None;
         self.footer.mode = FooterMode::ComposerEmpty;
         self.footer.hint_override = Some(Vec::new());
-        self.footer.plan_mode_nudge_visible = false;
         self.footer.flash = None;
     }
 
@@ -4187,17 +4165,6 @@ impl ChatComposer {
                 };
                 if let Some(line) = self.history_search_footer_line() {
                     render_footer_line(hint_rect, buf, line);
-                } else if self.footer.plan_mode_nudge_visible {
-                    let available_width =
-                        hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
-                    render_footer_line(
-                        hint_rect,
-                        buf,
-                        truncate_line_with_ellipsis_if_overflow(
-                            plan_mode_nudge_line(),
-                            available_width,
-                        ),
-                    );
                 } else {
                     let available_width =
                         hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
