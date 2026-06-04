@@ -268,6 +268,9 @@ context.
 
 **Outputs:**
 - `FORK_NOTES.md` documents the accepted pet-rendering delta and retest list.
+- Rare flicker reported after Phase 2 is re-checked after Phase 3: one blink on
+  message submit and one blink when a horizontal section divider appears before
+  final-answer streaming.
 - Focused tests pass.
 - Debug build has been manually accepted by Вова.
 - Release build is produced only after manual acceptance.
@@ -277,6 +280,11 @@ context.
 - [ ] `just fix -p codex-tui` run if Rust code changed.
 - [ ] `just test -p codex-tui pets` or narrower equivalent passes.
 - [ ] `cargo build -p codex-cli` passes after the final code phase.
+- [ ] After Phase 3 debug validation, ask Вова whether the submit/divider
+      flicker still appears, disappeared, or got worse.
+- [ ] If the submit/divider flicker remains, decide whether to add a narrow
+      targeted repaint workaround or leave it as a documented tmux passthrough
+      limitation.
 - [ ] Вова confirms manual debug behavior is acceptable.
 - [ ] `cargo build --release -p codex-cli` passes.
 - [ ] `target/release/codex --version` reports expected version.
@@ -318,6 +326,9 @@ context.
   - Resize pane.
   - Scroll transcript.
   - Switch tmux panes.
+  - Submit a message while the pet is visible.
+  - Trigger a response that draws a horizontal section divider before final
+    answer streaming.
   - SSH/mobile client fallback: acceptable behavior is no broken transcript
     rendering even if images do not show.
 
