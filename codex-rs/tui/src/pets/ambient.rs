@@ -19,7 +19,11 @@ use std::time::Instant;
 
 use anyhow::Context;
 use anyhow::Result;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
+use ratatui::style::Modifier;
+use unicode_width::UnicodeWidthStr as _;
 
 use crate::tui::FrameRequester;
 
@@ -126,6 +130,45 @@ pub(crate) struct AmbientPetDraw {
     pub(crate) sixel_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AmbientPetDrawContext<'a> {
+    buffer: Option<&'a Buffer>,
+    movement_target: Option<PetMovementTarget>,
+    movement_elapsed: Duration,
+}
+
+impl<'a> AmbientPetDrawContext<'a> {
+    #[cfg(test)]
+    pub(crate) const fn without_movement() -> Self {
+        Self {
+            buffer: None,
+            movement_target: None,
+            movement_elapsed: Duration::ZERO,
+        }
+    }
+
+    pub(crate) fn from_buffer(buffer: &'a Buffer) -> Self {
+        Self {
+            buffer: Some(buffer),
+            movement_target: None,
+            movement_elapsed: Duration::ZERO,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_movement_target(
+        buffer: &'a Buffer,
+        movement_target: PetMovementTarget,
+        movement_elapsed: Duration,
+    ) -> Self {
+        Self {
+            buffer: Some(buffer),
+            movement_target: Some(movement_target),
+            movement_elapsed,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct AmbientPet {
     pet: Pet,
@@ -198,6 +241,11 @@ impl AmbientPet {
         self.support = support;
     }
 
+    #[cfg(test)]
+    fn enable_lane_patrol_for_tests(&mut self) {
+        self.movement = PetMovement::lane_patrol();
+    }
+
     pub(crate) fn schedule_next_frame(&self) {
         if let Some(delay) = self.next_frame_delay() {
             self.frame_requester.schedule_frame_in(delay);
@@ -245,6 +293,7 @@ impl AmbientPet {
         &self,
         area: Rect,
         composer_bottom_y: u16,
+        context: AmbientPetDrawContext<'_>,
     ) -> Option<AmbientPetDraw> {
         let protocol = self.support.protocol()?;
         let size = self.image_size();
@@ -262,11 +311,7 @@ impl AmbientPet {
             size.columns,
             size.rows,
         );
-        let rect = self.movement.current_rect(
-            home,
-            PetMovementTarget::new(home.x, home.y),
-            Duration::ZERO,
-        );
+        let rect = self.movement_rect(protocol, home, context);
         Some(AmbientPetDraw {
             frame: self.current_frame_path()?,
             protocol,
@@ -278,6 +323,36 @@ impl AmbientPet {
             height_px: size.height_px,
             sixel_dir: self.sixel_dir.clone(),
         })
+    }
+
+    fn movement_rect(
+        &self,
+        protocol: ImageProtocol,
+        home: Rect,
+        context: AmbientPetDrawContext<'_>,
+    ) -> Rect {
+        if protocol == ImageProtocol::Sixel {
+            return home;
+        }
+
+        let Some(buffer) = context.buffer else {
+            return home;
+        };
+        let Some(target) = context.movement_target else {
+            return home;
+        };
+
+        let target_rect = Rect::new(target.x(), target.y(), home.width, home.height);
+        let movement_rect = self
+            .movement
+            .current_rect(home, target, context.movement_elapsed);
+        if rect_is_blank_in_buffer(buffer, target_rect)
+            && rect_is_blank_in_buffer(buffer, movement_rect)
+        {
+            movement_rect
+        } else {
+            home
+        }
     }
 
     /// Build a centered preview draw request for the `/pets` picker side pane.
@@ -474,6 +549,63 @@ fn notification_height(notification: &PetNotification) -> u16 {
     }
 }
 
+fn rect_is_blank_in_buffer(buffer: &Buffer, rect: Rect) -> bool {
+    if rect.width == 0 || rect.height == 0 || !rect_is_inside(rect, buffer.area) {
+        return false;
+    }
+
+    for y in rect.y..rect.bottom() {
+        for x in rect.x..rect.right() {
+            let Some(cell) = buffer.cell((x, y)) else {
+                return false;
+            };
+            if !cell_is_safely_blank(cell) || cell_is_covered_by_wide_symbol(buffer, x, y) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn cell_is_safely_blank(cell: &ratatui::buffer::Cell) -> bool {
+    if cell.skip {
+        return false;
+    }
+
+    let symbol = cell.symbol();
+    if symbol.is_empty() || !symbol.chars().all(char::is_whitespace) {
+        return false;
+    }
+
+    let style = cell.style();
+    let background_is_clear = style.bg.is_none() || style.bg == Some(Color::Reset);
+    let visually_occupied_modifiers =
+        Modifier::REVERSED | Modifier::UNDERLINED | Modifier::CROSSED_OUT;
+    background_is_clear && !style.add_modifier.intersects(visually_occupied_modifiers)
+}
+
+fn cell_is_covered_by_wide_symbol(buffer: &Buffer, x: u16, y: u16) -> bool {
+    let mut prev_x = x;
+    while prev_x > buffer.area.x {
+        prev_x = prev_x.saturating_sub(1);
+        let Some(cell) = buffer.cell((prev_x, y)) else {
+            return false;
+        };
+        let width = cell.symbol().width() as u16;
+        if width > 1 && prev_x.saturating_add(width) > x {
+            return true;
+        }
+    }
+    false
+}
+
+fn rect_is_inside(inner: Rect, outer: Rect) -> bool {
+    inner.x >= outer.x
+        && inner.y >= outer.y
+        && inner.right() <= outer.right()
+        && inner.bottom() <= outer.bottom()
+}
+
 #[cfg(test)]
 pub(crate) fn test_ambient_pet(
     frame_requester: FrameRequester,
@@ -526,6 +658,8 @@ fn test_animation() -> Animation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::style::Style;
 
     #[test]
     fn notification_labels_match_codex_app_vocabulary() {
@@ -557,5 +691,269 @@ mod tests {
 
         assert_eq!(pet.current_frame_path(), Some(PathBuf::from("frame-0.png")));
         assert_eq!(pet.next_frame_delay(), None);
+    }
+
+    #[test]
+    fn disabled_movement_draws_current_home_placement() {
+        let pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        let area = Rect::new(0, 0, 80, 24);
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::without_movement(),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
+        assert_eq!(draw.columns, 9);
+        assert_eq!(draw.rows, 5);
+    }
+
+    #[test]
+    fn sixel_protocol_stays_home_when_movement_is_configured() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        pet.set_image_support_for_tests(PetImageSupport::Supported(ImageProtocol::Sixel));
+        let area = Rect::new(0, 0, 80, 24);
+        let buffer = Buffer::empty(area);
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::with_movement_target(
+                    &buffer,
+                    PetMovementTarget::new(71, 12),
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
+    }
+
+    #[test]
+    fn movement_without_target_draws_home_with_rendered_buffer() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let buffer = Buffer::empty(area);
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::from_buffer(&buffer),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
+    }
+
+    #[test]
+    fn occupied_movement_target_draws_home() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        buffer[(71, 12)].set_symbol("X").set_style(Style::default());
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::with_movement_target(
+                    &buffer,
+                    PetMovementTarget::new(71, 12),
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
+    }
+
+    #[test]
+    fn styled_blank_movement_target_draws_home() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        buffer[(71, 12)]
+            .set_symbol(" ")
+            .set_style(Style::default().bg(Color::Blue));
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::with_movement_target(
+                    &buffer,
+                    PetMovementTarget::new(71, 12),
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
+    }
+
+    #[test]
+    fn struck_blank_movement_target_draws_home() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        buffer[(71, 12)]
+            .set_symbol(" ")
+            .set_style(Style::default().add_modifier(Modifier::CROSSED_OUT));
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::with_movement_target(
+                    &buffer,
+                    PetMovementTarget::new(71, 12),
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
+    }
+
+    #[test]
+    fn wide_glyph_continuation_in_target_draws_home() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        buffer.set_string(70, 12, "\u{754c}", Style::default());
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::with_movement_target(
+                    &buffer,
+                    PetMovementTarget::new(71, 12),
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
+    }
+
+    #[test]
+    fn occupied_intermediate_movement_rect_draws_home() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        buffer[(71, 15)].set_symbol("X").set_style(Style::default());
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::with_movement_target(
+                    &buffer,
+                    PetMovementTarget::new(71, 12),
+                    Duration::from_millis(/*millis*/ 450),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
+    }
+
+    #[test]
+    fn safe_movement_target_draws_inside_right_lane() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let buffer = Buffer::empty(area);
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::with_movement_target(
+                    &buffer,
+                    PetMovementTarget::new(71, 12),
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 12);
+        assert_eq!(draw.columns, 9);
+        assert_eq!(draw.rows, 5);
+    }
+
+    #[test]
+    fn movement_target_outside_rendered_buffer_draws_home() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let rendered_buffer = Buffer::empty(Rect::new(0, 20, 80, 4));
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::with_movement_target(
+                    &rendered_buffer,
+                    PetMovementTarget::new(71, 12),
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
     }
 }

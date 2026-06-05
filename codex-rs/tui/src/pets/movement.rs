@@ -35,8 +35,18 @@ pub(crate) struct PetMovementTarget {
 }
 
 impl PetMovementTarget {
+    // Phase 3 creates runtime movement targets from the rendered pet lane.
+    #[allow(dead_code)]
     pub(crate) const fn new(x: u16, y: u16) -> Self {
         Self { x, y }
+    }
+
+    pub(crate) const fn x(self) -> u16 {
+        self.x
+    }
+
+    pub(crate) const fn y(self) -> u16 {
+        self.y
     }
 }
 

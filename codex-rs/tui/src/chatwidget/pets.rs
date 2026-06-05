@@ -118,10 +118,24 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    #[cfg(test)]
     pub(crate) fn ambient_pet_draw(
         &self,
         area: Rect,
         composer_bottom_y: u16,
+    ) -> Option<crate::pets::AmbientPetDraw> {
+        self.ambient_pet_draw_with_context(
+            area,
+            composer_bottom_y,
+            crate::pets::AmbientPetDrawContext::without_movement(),
+        )
+    }
+
+    pub(crate) fn ambient_pet_draw_with_context(
+        &self,
+        area: Rect,
+        composer_bottom_y: u16,
+        context: crate::pets::AmbientPetDrawContext<'_>,
     ) -> Option<crate::pets::AmbientPetDraw> {
         if !self.bottom_pane.no_modal_or_popup_active() {
             return None;
@@ -133,7 +147,7 @@ impl ChatWidget {
         };
         self.ambient_pet
             .as_ref()?
-            .draw_request(area, anchor_bottom_y)
+            .draw_request(area, anchor_bottom_y, context)
     }
 
     pub(super) fn ambient_pet_wrap_reserved_cols(&self) -> u16 {

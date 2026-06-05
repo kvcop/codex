@@ -32,6 +32,7 @@ use anyhow::Result;
 
 pub(crate) use ambient::AmbientPet;
 pub(crate) use ambient::AmbientPetDraw;
+pub(crate) use ambient::AmbientPetDrawContext;
 pub(crate) use ambient::PetNotificationKind;
 #[cfg(test)]
 pub(crate) use ambient::test_ambient_pet;

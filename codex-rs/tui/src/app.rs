@@ -1365,8 +1365,11 @@ See the Codex keymap documentation for supported actions and examples."
                     frame.set_cursor_style(self.chat_widget.cursor_style(area));
                     frame.set_cursor_position((x, y));
                 }
-                self.chat_widget
-                    .ambient_pet_draw(ambient_pet_area, area.bottom())
+                self.chat_widget.ambient_pet_draw_with_context(
+                    ambient_pet_area,
+                    area.bottom(),
+                    crate::pets::AmbientPetDrawContext::from_buffer(frame.buffer),
+                )
             })?
         } else {
             tui.draw_with_ambient_pet_image(desired_height, |frame| {
@@ -1377,8 +1380,11 @@ See the Codex keymap documentation for supported actions and examples."
                     frame.set_cursor_style(self.chat_widget.cursor_style(area));
                     frame.set_cursor_position((x, y));
                 }
-                self.chat_widget
-                    .ambient_pet_draw(ambient_pet_area, area.bottom())
+                self.chat_widget.ambient_pet_draw_with_context(
+                    ambient_pet_area,
+                    area.bottom(),
+                    crate::pets::AmbientPetDrawContext::from_buffer(frame.buffer),
+                )
             })?
         };
         Ok((rendered_area, ambient_pet_result))
