@@ -1368,7 +1368,10 @@ See the Codex keymap documentation for supported actions and examples."
                 self.chat_widget.ambient_pet_draw_with_context(
                     ambient_pet_area,
                     area.bottom(),
-                    crate::pets::AmbientPetDrawContext::from_buffer(frame.buffer),
+                    crate::pets::AmbientPetDrawContext::from_buffer_with_movement_bounds(
+                        frame.buffer,
+                        ambient_pet_area,
+                    ),
                 )
             })?
         } else {
@@ -1383,7 +1386,10 @@ See the Codex keymap documentation for supported actions and examples."
                 self.chat_widget.ambient_pet_draw_with_context(
                     ambient_pet_area,
                     area.bottom(),
-                    crate::pets::AmbientPetDrawContext::from_buffer(frame.buffer),
+                    crate::pets::AmbientPetDrawContext::from_buffer_with_movement_bounds(
+                        frame.buffer,
+                        ambient_pet_area,
+                    ),
                 )
             })?
         };

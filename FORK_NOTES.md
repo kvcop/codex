@@ -100,11 +100,12 @@ conflict with future upstream merges or need manual retesting after an update.
   ```
 
 - The debug patrol moves vertically inside the rendered right-side pet lane.
-  Candidate target and in-flight sprite rectangles must fit inside the current
-  rendered buffer and every covered cell must be safely blank. Background color
-  on whitespace is allowed because the pet image covers that background anyway;
-  non-whitespace symbols, skipped cells, visual text modifiers, wide-glyph
-  continuations, and out-of-buffer rectangles still keep the pet at home.
+  Candidate target and in-flight sprite rectangles must fit inside the full
+  terminal screen, while any cells that overlap the current rendered buffer are
+  still checked for safe blankness. Background color on whitespace is allowed
+  because the pet image covers that background anyway; non-whitespace symbols,
+  skipped cells, visual text modifiers, wide-glyph continuations, and
+  out-of-screen rectangles still keep the pet at home.
 - `animations = false` disables movement scheduling as well as frame animation.
   Rejected movement targets still keep the bounded movement cadence while the
   debug flag is on; identical draw dedupe suppresses redundant Kitty payloads.

@@ -137,6 +137,7 @@ pub(crate) struct AmbientPetDraw {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AmbientPetDrawContext<'a> {
     buffer: Option<&'a Buffer>,
+    movement_bounds: Option<Rect>,
     movement_target: Option<PetMovementTarget>,
     movement_elapsed: Option<Duration>,
 }
@@ -146,14 +147,19 @@ impl<'a> AmbientPetDrawContext<'a> {
     pub(crate) const fn without_movement() -> Self {
         Self {
             buffer: None,
+            movement_bounds: None,
             movement_target: None,
             movement_elapsed: None,
         }
     }
 
-    pub(crate) fn from_buffer(buffer: &'a Buffer) -> Self {
+    pub(crate) fn from_buffer_with_movement_bounds(
+        buffer: &'a Buffer,
+        movement_bounds: Rect,
+    ) -> Self {
         Self {
             buffer: Some(buffer),
+            movement_bounds: Some(movement_bounds),
             movement_target: None,
             movement_elapsed: None,
         }
@@ -163,6 +169,7 @@ impl<'a> AmbientPetDrawContext<'a> {
     fn from_buffer_with_movement_elapsed(buffer: &'a Buffer, movement_elapsed: Duration) -> Self {
         Self {
             buffer: Some(buffer),
+            movement_bounds: Some(buffer.area),
             movement_target: None,
             movement_elapsed: Some(movement_elapsed),
         }
@@ -176,9 +183,16 @@ impl<'a> AmbientPetDrawContext<'a> {
     ) -> Self {
         Self {
             buffer: Some(buffer),
+            movement_bounds: Some(buffer.area),
             movement_target: Some(movement_target),
             movement_elapsed: Some(movement_elapsed),
         }
+    }
+
+    #[cfg(test)]
+    fn with_movement_bounds(mut self, movement_bounds: Rect) -> Self {
+        self.movement_bounds = Some(movement_bounds);
+        self
     }
 }
 
@@ -386,15 +400,17 @@ impl AmbientPet {
             );
             return home;
         };
+        let movement_bounds = context.movement_bounds.unwrap_or(buffer.area);
         let Some(target) = context
             .movement_target
-            .or_else(|| lane_patrol_target(home, buffer))
+            .or_else(|| lane_patrol_target(home, movement_bounds))
         else {
             tracing::trace!(
                 target: MOVEMENT_LOG_TARGET,
                 ?protocol,
                 ?home,
                 buffer_area = ?buffer.area,
+                ?movement_bounds,
                 "pet movement target unavailable"
             );
             return home;
@@ -405,8 +421,8 @@ impl AmbientPet {
             .movement_elapsed
             .unwrap_or_else(|| self.movement_started_at.elapsed());
         let movement_rect = self.movement.current_rect(home, target, movement_elapsed);
-        let target_rejection = rect_blank_rejection(buffer, target_rect);
-        let movement_rejection = rect_blank_rejection(buffer, movement_rect);
+        let target_rejection = rect_blank_rejection(buffer, movement_bounds, target_rect);
+        let movement_rejection = rect_blank_rejection(buffer, movement_bounds, movement_rect);
         if target_rejection.is_none() && movement_rejection.is_none() {
             tracing::trace!(
                 target: MOVEMENT_LOG_TARGET,
@@ -414,6 +430,7 @@ impl AmbientPet {
                 ?home,
                 ?target_rect,
                 ?movement_rect,
+                ?movement_bounds,
                 movement_elapsed_ms = movement_elapsed.as_millis(),
                 "pet movement accepted"
             );
@@ -425,6 +442,7 @@ impl AmbientPet {
                 ?home,
                 ?target_rect,
                 ?movement_rect,
+                ?movement_bounds,
                 movement_elapsed_ms = movement_elapsed.as_millis(),
                 ?target_rejection,
                 ?movement_rejection,
@@ -657,16 +675,21 @@ enum BlankCellRejection {
     WideSymbolContinuation,
 }
 
-fn rect_blank_rejection(buffer: &Buffer, rect: Rect) -> Option<BlankRectRejection> {
-    if rect.width == 0 || rect.height == 0 || !rect_is_inside(rect, buffer.area) {
+fn rect_blank_rejection(
+    buffer: &Buffer,
+    movement_bounds: Rect,
+    rect: Rect,
+) -> Option<BlankRectRejection> {
+    if rect.width == 0 || rect.height == 0 || !rect_is_inside(rect, movement_bounds) {
         return Some(BlankRectRejection::InvalidRect {
             rect,
-            buffer_area: buffer.area,
+            buffer_area: movement_bounds,
         });
     }
 
-    for y in rect.y..rect.bottom() {
-        for x in rect.x..rect.right() {
+    let checked_area = rect_intersection(rect, buffer.area);
+    for y in checked_area.y..checked_area.bottom() {
+        for x in checked_area.x..checked_area.right() {
             let Some(cell) = buffer.cell((x, y)) else {
                 return Some(BlankRectRejection::MissingCell { x, y });
             };
@@ -749,6 +772,14 @@ fn rect_is_inside(inner: Rect, outer: Rect) -> bool {
         && inner.bottom() <= outer.bottom()
 }
 
+fn rect_intersection(lhs: Rect, rhs: Rect) -> Rect {
+    let x = lhs.x.max(rhs.x);
+    let y = lhs.y.max(rhs.y);
+    let right = lhs.right().min(rhs.right());
+    let bottom = lhs.bottom().min(rhs.bottom());
+    Rect::new(x, y, right.saturating_sub(x), bottom.saturating_sub(y))
+}
+
 #[cfg(test)]
 pub(crate) fn test_ambient_pet(
     frame_requester: FrameRequester,
@@ -801,23 +832,23 @@ fn movement_from_env_value(value: Option<&str>) -> PetMovement {
     }
 }
 
-fn lane_patrol_target(home: Rect, buffer: &Buffer) -> Option<PetMovementTarget> {
+fn lane_patrol_target(home: Rect, movement_bounds: Rect) -> Option<PetMovementTarget> {
     if home.width == 0
         || home.height == 0
-        || home.x < buffer.area.x
-        || home.right() > buffer.area.right()
+        || home.x < movement_bounds.x
+        || home.right() > movement_bounds.right()
     {
         return None;
     }
 
-    let lowest_home_y_inside_buffer = buffer.area.bottom().checked_sub(home.height)?;
-    if lowest_home_y_inside_buffer < buffer.area.y {
+    let lowest_home_y_inside_bounds = movement_bounds.bottom().checked_sub(home.height)?;
+    if lowest_home_y_inside_bounds < movement_bounds.y {
         return None;
     }
 
-    let bounded_home_y = home.y.min(lowest_home_y_inside_buffer);
+    let bounded_home_y = home.y.min(lowest_home_y_inside_bounds);
     let rows_up = bounded_home_y
-        .saturating_sub(buffer.area.y)
+        .saturating_sub(movement_bounds.y)
         .min(LANE_PATROL_MAX_ROWS);
     if rows_up == 0 {
         return None;
@@ -825,7 +856,7 @@ fn lane_patrol_target(home: Rect, buffer: &Buffer) -> Option<PetMovementTarget> 
 
     let target = PetMovementTarget::new(home.x, bounded_home_y - rows_up);
     let target_rect = Rect::new(target.x(), target.y(), home.width, home.height);
-    rect_is_inside(target_rect, buffer.area).then_some(target)
+    rect_is_inside(target_rect, movement_bounds).then_some(target)
 }
 
 fn protocol_allows_movement(protocol: ImageProtocol) -> bool {
@@ -992,6 +1023,63 @@ mod tests {
         assert_eq!(draw.y, 34);
         assert_eq!(draw.columns, 9);
         assert_eq!(draw.rows, 5);
+    }
+
+    #[test]
+    fn lane_patrol_uses_full_bounds_when_rendered_buffer_is_short() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let rendered_buffer = Buffer::empty(Rect::new(0, 18, 80, 6));
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::from_buffer_with_movement_elapsed(
+                    &rendered_buffer,
+                    Duration::from_millis(/*millis*/ 900),
+                )
+                .with_movement_bounds(area),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 14);
+        assert_eq!(draw.columns, 9);
+        assert_eq!(draw.rows, 5);
+    }
+
+    #[test]
+    fn lane_patrol_full_bounds_still_rejects_occupied_rendered_cells() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut rendered_buffer = Buffer::empty(Rect::new(0, 18, 80, 6));
+        rendered_buffer[(71, 18)]
+            .set_symbol("X")
+            .set_style(Style::default());
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::from_buffer_with_movement_elapsed(
+                    &rendered_buffer,
+                    Duration::from_millis(/*millis*/ 900),
+                )
+                .with_movement_bounds(area),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 18);
     }
 
     #[test]
