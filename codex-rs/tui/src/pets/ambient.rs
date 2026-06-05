@@ -47,6 +47,7 @@ const PET_COMPOSER_GAP_PX: u16 = 10;
 const TERMINAL_ROW_HEIGHT_PX: u16 = 15;
 const LANE_PATROL_MAX_ROWS: u16 = 4;
 const UNSAFE_TUI_PET_MOVEMENT_ENV_VAR: &str = "CODEX_UNSAFE_TUI_PET_MOVEMENT";
+const MOVEMENT_LOG_TARGET: &str = "codex_tui::pets::movement";
 
 const RUNNING_LIFETIME: Duration = Duration::from_secs(3 * 60);
 const FAILED_LIFETIME: Duration = Duration::from_secs(60 * 60);
@@ -348,20 +349,54 @@ impl AmbientPet {
         home: Rect,
         context: AmbientPetDrawContext<'_>,
     ) -> Rect {
-        if !protocol_allows_movement(protocol)
-            || !self.animations_enabled
-            || !self.movement.is_active()
-        {
+        if !protocol_allows_movement(protocol) {
+            tracing::trace!(
+                target: MOVEMENT_LOG_TARGET,
+                ?protocol,
+                ?home,
+                "pet movement disabled for image protocol"
+            );
+            return home;
+        }
+        if !self.animations_enabled {
+            tracing::trace!(
+                target: MOVEMENT_LOG_TARGET,
+                ?protocol,
+                ?home,
+                "pet movement disabled because animations are disabled"
+            );
+            return home;
+        }
+        if !self.movement.is_active() {
+            tracing::trace!(
+                target: MOVEMENT_LOG_TARGET,
+                ?protocol,
+                ?home,
+                "pet movement inactive"
+            );
             return home;
         }
 
         let Some(buffer) = context.buffer else {
+            tracing::trace!(
+                target: MOVEMENT_LOG_TARGET,
+                ?protocol,
+                ?home,
+                "pet movement has no rendered buffer context"
+            );
             return home;
         };
         let Some(target) = context
             .movement_target
             .or_else(|| lane_patrol_target(home, buffer))
         else {
+            tracing::trace!(
+                target: MOVEMENT_LOG_TARGET,
+                ?protocol,
+                ?home,
+                buffer_area = ?buffer.area,
+                "pet movement target unavailable"
+            );
             return home;
         };
 
@@ -370,11 +405,31 @@ impl AmbientPet {
             .movement_elapsed
             .unwrap_or_else(|| self.movement_started_at.elapsed());
         let movement_rect = self.movement.current_rect(home, target, movement_elapsed);
-        if rect_is_blank_in_buffer(buffer, target_rect)
-            && rect_is_blank_in_buffer(buffer, movement_rect)
-        {
+        let target_rejection = rect_blank_rejection(buffer, target_rect);
+        let movement_rejection = rect_blank_rejection(buffer, movement_rect);
+        if target_rejection.is_none() && movement_rejection.is_none() {
+            tracing::trace!(
+                target: MOVEMENT_LOG_TARGET,
+                ?protocol,
+                ?home,
+                ?target_rect,
+                ?movement_rect,
+                movement_elapsed_ms = movement_elapsed.as_millis(),
+                "pet movement accepted"
+            );
             movement_rect
         } else {
+            tracing::trace!(
+                target: MOVEMENT_LOG_TARGET,
+                ?protocol,
+                ?home,
+                ?target_rect,
+                ?movement_rect,
+                movement_elapsed_ms = movement_elapsed.as_millis(),
+                ?target_rejection,
+                ?movement_rejection,
+                "pet movement rejected; drawing home"
+            );
             home
         }
     }
@@ -573,39 +628,105 @@ fn notification_height(notification: &PetNotification) -> u16 {
     }
 }
 
-fn rect_is_blank_in_buffer(buffer: &Buffer, rect: Rect) -> bool {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BlankRectRejection {
+    InvalidRect {
+        rect: Rect,
+        buffer_area: Rect,
+    },
+    MissingCell {
+        x: u16,
+        y: u16,
+    },
+    Cell {
+        x: u16,
+        y: u16,
+        reason: BlankCellRejection,
+        symbol: String,
+        background: Option<Color>,
+        modifiers: Modifier,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlankCellRejection {
+    Skipped,
+    EmptySymbol,
+    NonWhitespace,
+    Background,
+    VisualModifier,
+    WideSymbolContinuation,
+}
+
+fn rect_blank_rejection(buffer: &Buffer, rect: Rect) -> Option<BlankRectRejection> {
     if rect.width == 0 || rect.height == 0 || !rect_is_inside(rect, buffer.area) {
-        return false;
+        return Some(BlankRectRejection::InvalidRect {
+            rect,
+            buffer_area: buffer.area,
+        });
     }
 
     for y in rect.y..rect.bottom() {
         for x in rect.x..rect.right() {
             let Some(cell) = buffer.cell((x, y)) else {
-                return false;
+                return Some(BlankRectRejection::MissingCell { x, y });
             };
-            if !cell_is_safely_blank(cell) || cell_is_covered_by_wide_symbol(buffer, x, y) {
-                return false;
+            if let Some(reason) = cell_blank_rejection(cell) {
+                return Some(blank_cell_rejection(cell, x, y, reason));
+            }
+            if cell_is_covered_by_wide_symbol(buffer, x, y) {
+                return Some(blank_cell_rejection(
+                    cell,
+                    x,
+                    y,
+                    BlankCellRejection::WideSymbolContinuation,
+                ));
             }
         }
     }
-    true
+    None
 }
 
-fn cell_is_safely_blank(cell: &ratatui::buffer::Cell) -> bool {
+fn blank_cell_rejection(
+    cell: &ratatui::buffer::Cell,
+    x: u16,
+    y: u16,
+    reason: BlankCellRejection,
+) -> BlankRectRejection {
+    BlankRectRejection::Cell {
+        x,
+        y,
+        reason,
+        symbol: cell.symbol().to_string(),
+        background: cell.style().bg,
+        modifiers: cell.style().add_modifier,
+    }
+}
+
+fn cell_blank_rejection(cell: &ratatui::buffer::Cell) -> Option<BlankCellRejection> {
     if cell.skip {
-        return false;
+        return Some(BlankCellRejection::Skipped);
     }
 
     let symbol = cell.symbol();
-    if symbol.is_empty() || !symbol.chars().all(char::is_whitespace) {
-        return false;
+    if symbol.is_empty() {
+        return Some(BlankCellRejection::EmptySymbol);
+    }
+    if !symbol.chars().all(char::is_whitespace) {
+        return Some(BlankCellRejection::NonWhitespace);
     }
 
     let style = cell.style();
     let background_is_clear = style.bg.is_none() || style.bg == Some(Color::Reset);
     let visually_occupied_modifiers =
         Modifier::REVERSED | Modifier::UNDERLINED | Modifier::CROSSED_OUT;
-    background_is_clear && !style.add_modifier.intersects(visually_occupied_modifiers)
+    if !background_is_clear {
+        return Some(BlankCellRejection::Background);
+    }
+    if style.add_modifier.intersects(visually_occupied_modifiers) {
+        return Some(BlankCellRejection::VisualModifier);
+    }
+    None
 }
 
 fn cell_is_covered_by_wide_symbol(buffer: &Buffer, x: u16, y: u16) -> bool {
@@ -663,7 +784,16 @@ pub(crate) fn test_ambient_pet(
 }
 
 fn configured_movement() -> PetMovement {
-    movement_from_env_value(env::var(UNSAFE_TUI_PET_MOVEMENT_ENV_VAR).ok().as_deref())
+    let raw_value = env::var(UNSAFE_TUI_PET_MOVEMENT_ENV_VAR).ok();
+    let movement = movement_from_env_value(raw_value.as_deref());
+    tracing::trace!(
+        target: MOVEMENT_LOG_TARGET,
+        env_var = UNSAFE_TUI_PET_MOVEMENT_ENV_VAR,
+        value = ?raw_value,
+        active = movement.is_active(),
+        "resolved ambient pet movement setting"
+    );
+    movement
 }
 
 fn movement_from_env_value(value: Option<&str>) -> PetMovement {

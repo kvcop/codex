@@ -89,6 +89,16 @@ conflict with future upstream merges or need manual retesting after an update.
   codex
   ```
 
+- Movement diagnostics use the `codex_tui::pets::movement` tracing target.
+  For a focused trace run:
+
+  ```fish
+  set -x RUST_LOG codex_tui::pets::movement=trace
+  set -x CODEX_UNSAFE_TUI_PETS_PROTOCOL kitty
+  set -x CODEX_UNSAFE_TUI_PET_MOVEMENT lane-patrol
+  target/debug/codex
+  ```
+
 - The debug patrol moves vertically inside the rendered right-side pet lane.
   Candidate target and in-flight sprite rectangles must fit inside the current
   rendered buffer and every covered cell must be safely blank. If the lane is
