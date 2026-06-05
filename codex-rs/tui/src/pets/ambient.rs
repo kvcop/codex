@@ -13,6 +13,7 @@
 
 #[cfg(test)]
 use std::collections::HashMap;
+use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
@@ -44,6 +45,8 @@ use super::movement::PetMovementTarget;
 const PET_TARGET_HEIGHT_PX: u16 = 75;
 const PET_COMPOSER_GAP_PX: u16 = 10;
 const TERMINAL_ROW_HEIGHT_PX: u16 = 15;
+const LANE_PATROL_MAX_ROWS: u16 = 4;
+const UNSAFE_TUI_PET_MOVEMENT_ENV_VAR: &str = "CODEX_UNSAFE_TUI_PET_MOVEMENT";
 
 const RUNNING_LIFETIME: Duration = Duration::from_secs(3 * 60);
 const FAILED_LIFETIME: Duration = Duration::from_secs(60 * 60);
@@ -134,7 +137,7 @@ pub(crate) struct AmbientPetDraw {
 pub(crate) struct AmbientPetDrawContext<'a> {
     buffer: Option<&'a Buffer>,
     movement_target: Option<PetMovementTarget>,
-    movement_elapsed: Duration,
+    movement_elapsed: Option<Duration>,
 }
 
 impl<'a> AmbientPetDrawContext<'a> {
@@ -143,7 +146,7 @@ impl<'a> AmbientPetDrawContext<'a> {
         Self {
             buffer: None,
             movement_target: None,
-            movement_elapsed: Duration::ZERO,
+            movement_elapsed: None,
         }
     }
 
@@ -151,7 +154,16 @@ impl<'a> AmbientPetDrawContext<'a> {
         Self {
             buffer: Some(buffer),
             movement_target: None,
-            movement_elapsed: Duration::ZERO,
+            movement_elapsed: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn from_buffer_with_movement_elapsed(buffer: &'a Buffer, movement_elapsed: Duration) -> Self {
+        Self {
+            buffer: Some(buffer),
+            movement_target: None,
+            movement_elapsed: Some(movement_elapsed),
         }
     }
 
@@ -164,7 +176,7 @@ impl<'a> AmbientPetDrawContext<'a> {
         Self {
             buffer: Some(buffer),
             movement_target: Some(movement_target),
-            movement_elapsed,
+            movement_elapsed: Some(movement_elapsed),
         }
     }
 }
@@ -180,6 +192,7 @@ pub(crate) struct AmbientPet {
     animation_started_at: Instant,
     animations_enabled: bool,
     movement: PetMovement,
+    movement_started_at: Instant,
 }
 
 impl AmbientPet {
@@ -219,7 +232,8 @@ impl AmbientPet {
             notification: None,
             animation_started_at: Instant::now(),
             animations_enabled,
-            movement: PetMovement::disabled(),
+            movement: configured_movement(),
+            movement_started_at: Instant::now(),
         })
     }
 
@@ -244,6 +258,7 @@ impl AmbientPet {
     #[cfg(test)]
     fn enable_lane_patrol_for_tests(&mut self) {
         self.movement = PetMovement::lane_patrol();
+        self.movement_started_at = Instant::now();
     }
 
     pub(crate) fn schedule_next_frame(&self) {
@@ -253,16 +268,18 @@ impl AmbientPet {
     }
 
     fn next_frame_delay(&self) -> Option<Duration> {
-        if self.support.protocol().is_none() {
-            return None;
-        }
+        let protocol = self.support.protocol()?;
 
         let movement_animation_state = if self.animations_enabled {
             MovementAnimationState::Enabled
         } else {
             MovementAnimationState::Disabled
         };
-        let movement_delay = self.movement.next_tick_delay(movement_animation_state);
+        let movement_delay = if protocol_allows_movement(protocol) {
+            self.movement.next_tick_delay(movement_animation_state)
+        } else {
+            None
+        };
         if !self.animations_enabled {
             return movement_delay;
         }
@@ -331,21 +348,28 @@ impl AmbientPet {
         home: Rect,
         context: AmbientPetDrawContext<'_>,
     ) -> Rect {
-        if protocol == ImageProtocol::Sixel {
+        if !protocol_allows_movement(protocol)
+            || !self.animations_enabled
+            || !self.movement.is_active()
+        {
             return home;
         }
 
         let Some(buffer) = context.buffer else {
             return home;
         };
-        let Some(target) = context.movement_target else {
+        let Some(target) = context
+            .movement_target
+            .or_else(|| lane_patrol_target(home, buffer))
+        else {
             return home;
         };
 
         let target_rect = Rect::new(target.x(), target.y(), home.width, home.height);
-        let movement_rect = self
-            .movement
-            .current_rect(home, target, context.movement_elapsed);
+        let movement_elapsed = context
+            .movement_elapsed
+            .unwrap_or_else(|| self.movement_started_at.elapsed());
+        let movement_rect = self.movement.current_rect(home, target, movement_elapsed);
         if rect_is_blank_in_buffer(buffer, target_rect)
             && rect_is_blank_in_buffer(buffer, movement_rect)
         {
@@ -634,6 +658,43 @@ pub(crate) fn test_ambient_pet(
             .unwrap(),
         animations_enabled,
         movement: PetMovement::disabled(),
+        movement_started_at: Instant::now(),
+    }
+}
+
+fn configured_movement() -> PetMovement {
+    movement_from_env_value(env::var(UNSAFE_TUI_PET_MOVEMENT_ENV_VAR).ok().as_deref())
+}
+
+fn movement_from_env_value(value: Option<&str>) -> PetMovement {
+    match value {
+        Some("lane-patrol") => PetMovement::lane_patrol(),
+        Some(_) | None => PetMovement::disabled(),
+    }
+}
+
+fn lane_patrol_target(home: Rect, buffer: &Buffer) -> Option<PetMovementTarget> {
+    if !rect_is_inside(home, buffer.area) {
+        return None;
+    }
+
+    let rows_up = home
+        .y
+        .saturating_sub(buffer.area.y)
+        .min(LANE_PATROL_MAX_ROWS);
+    if rows_up == 0 {
+        return None;
+    }
+
+    let target = PetMovementTarget::new(home.x, home.y - rows_up);
+    let target_rect = Rect::new(target.x(), target.y(), home.width, home.height);
+    rect_is_inside(target_rect, buffer.area).then_some(target)
+}
+
+fn protocol_allows_movement(protocol: ImageProtocol) -> bool {
+    match protocol {
+        ImageProtocol::Kitty | ImageProtocol::KittyLocalFile => true,
+        ImageProtocol::Sixel => false,
     }
 }
 
@@ -743,7 +804,7 @@ mod tests {
     }
 
     #[test]
-    fn movement_without_target_draws_home_with_rendered_buffer() {
+    fn lane_patrol_from_rendered_buffer_moves_inside_right_lane() {
         let mut pet = test_ambient_pet(
             FrameRequester::test_dummy(),
             /*animations_enabled*/ true,
@@ -756,12 +817,56 @@ mod tests {
             .draw_request(
                 area,
                 area.bottom(),
-                AmbientPetDrawContext::from_buffer(&buffer),
+                AmbientPetDrawContext::from_buffer_with_movement_elapsed(
+                    &buffer,
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 14);
+        assert_eq!(draw.columns, 9);
+        assert_eq!(draw.rows, 5);
+    }
+
+    #[test]
+    fn lane_patrol_stays_home_when_animations_are_disabled() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ false,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let buffer = Buffer::empty(area);
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::from_buffer_with_movement_elapsed(
+                    &buffer,
+                    Duration::from_millis(/*millis*/ 900),
+                ),
             )
             .expect("draw request");
 
         assert_eq!(draw.x, 71);
         assert_eq!(draw.y, 18);
+        assert_eq!(pet.next_frame_delay(), None);
+    }
+
+    #[test]
+    fn movement_from_env_value_enables_lane_patrol_without_mutating_env() {
+        assert_eq!(
+            movement_from_env_value(Some("lane-patrol")),
+            PetMovement::lane_patrol()
+        );
+        assert_eq!(
+            movement_from_env_value(Some("bogus")),
+            PetMovement::disabled()
+        );
+        assert_eq!(movement_from_env_value(None), PetMovement::disabled());
     }
 
     #[test]

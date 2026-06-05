@@ -78,6 +78,25 @@ conflict with future upstream merges or need manual retesting after an update.
   during resize. Use it only for local testing.
 - Current implementation only recognizes `kitty`; unknown values are ignored and
   normal detection is used.
+- Local movement experiment: `CODEX_UNSAFE_TUI_PET_MOVEMENT=lane-patrol`.
+  Unknown movement values are ignored. The patrol is debug-only, default-off,
+  and only moves the ambient pet for Kitty-style protocols; Sixel stays at home.
+  Usage in fish:
+
+  ```fish
+  set -x CODEX_UNSAFE_TUI_PETS_PROTOCOL kitty
+  set -x CODEX_UNSAFE_TUI_PET_MOVEMENT lane-patrol
+  codex
+  ```
+
+- The debug patrol moves vertically inside the rendered right-side pet lane.
+  Candidate target and in-flight sprite rectangles must fit inside the current
+  rendered buffer and every covered cell must be safely blank. If the lane is
+  occupied, styled, outside the buffer, or otherwise unsafe, the pet stays home.
+- `animations = false` disables movement scheduling as well as frame animation.
+  Rejected movement targets still keep the bounded movement cadence while the
+  debug flag is on; identical draw dedupe suppresses redundant Kitty payloads.
+  Revisit this only if manual testing shows visible churn or cost.
 - Local flicker mitigation keeps the Phase 1+2 path from
   `docs/local-fork/pet-rendering-flicker-plan.md`: identical Kitty redraws are
   deduplicated, and frame changes display the new owned image id before deleting
@@ -100,6 +119,8 @@ conflict with future upstream merges or need manual retesting after an update.
   implementing real pet movement across transcript/composer rows.
 - Retest after changes:
   - pet appears in a Kitty terminal inside tmux;
+  - with `CODEX_UNSAFE_TUI_PET_MOVEMENT=lane-patrol`, pet visibly patrols only
+    inside the right-side lane and never covers text;
   - image survives normal TUI redraws;
   - submitting a message does not introduce unacceptable blink;
   - horizontal section dividers before final-answer streaming do not introduce

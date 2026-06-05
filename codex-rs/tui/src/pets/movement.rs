@@ -35,8 +35,6 @@ pub(crate) struct PetMovementTarget {
 }
 
 impl PetMovementTarget {
-    // Phase 3 creates runtime movement targets from the rendered pet lane.
-    #[allow(dead_code)]
     pub(crate) const fn new(x: u16, y: u16) -> Self {
         Self { x, y }
     }
@@ -62,12 +60,14 @@ impl PetMovement {
         }
     }
 
-    // Phase 3 wires this through the hidden debug movement flag.
-    #[allow(dead_code)]
     pub(crate) const fn lane_patrol() -> Self {
         Self {
             mode: PetMovementMode::LanePatrol,
         }
+    }
+
+    pub(crate) const fn is_active(self) -> bool {
+        !matches!(self.mode, PetMovementMode::Disabled)
     }
 
     pub(crate) fn current_rect(
