@@ -653,7 +653,6 @@ enum BlankCellRejection {
     Skipped,
     EmptySymbol,
     NonWhitespace,
-    Background,
     VisualModifier,
     WideSymbolContinuation,
 }
@@ -716,14 +715,13 @@ fn cell_blank_rejection(cell: &ratatui::buffer::Cell) -> Option<BlankCellRejecti
         return Some(BlankCellRejection::NonWhitespace);
     }
 
-    let style = cell.style();
-    let background_is_clear = style.bg.is_none() || style.bg == Some(Color::Reset);
     let visually_occupied_modifiers =
         Modifier::REVERSED | Modifier::UNDERLINED | Modifier::CROSSED_OUT;
-    if !background_is_clear {
-        return Some(BlankCellRejection::Background);
-    }
-    if style.add_modifier.intersects(visually_occupied_modifiers) {
+    if cell
+        .style()
+        .add_modifier
+        .intersects(visually_occupied_modifiers)
+    {
         return Some(BlankCellRejection::VisualModifier);
     }
     None
@@ -804,19 +802,28 @@ fn movement_from_env_value(value: Option<&str>) -> PetMovement {
 }
 
 fn lane_patrol_target(home: Rect, buffer: &Buffer) -> Option<PetMovementTarget> {
-    if !rect_is_inside(home, buffer.area) {
+    if home.width == 0
+        || home.height == 0
+        || home.x < buffer.area.x
+        || home.right() > buffer.area.right()
+    {
         return None;
     }
 
-    let rows_up = home
-        .y
+    let lowest_home_y_inside_buffer = buffer.area.bottom().checked_sub(home.height)?;
+    if lowest_home_y_inside_buffer < buffer.area.y {
+        return None;
+    }
+
+    let bounded_home_y = home.y.min(lowest_home_y_inside_buffer);
+    let rows_up = bounded_home_y
         .saturating_sub(buffer.area.y)
         .min(LANE_PATROL_MAX_ROWS);
     if rows_up == 0 {
         return None;
     }
 
-    let target = PetMovementTarget::new(home.x, home.y - rows_up);
+    let target = PetMovementTarget::new(home.x, bounded_home_y - rows_up);
     let target_rect = Rect::new(target.x(), target.y(), home.width, home.height);
     rect_is_inside(target_rect, buffer.area).then_some(target)
 }
@@ -961,6 +968,58 @@ mod tests {
     }
 
     #[test]
+    fn lane_patrol_from_short_rendered_buffer_moves_when_sprite_fits() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 41);
+        let rendered_buffer = Buffer::empty(Rect::new(0, 34, 80, 6));
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::from_buffer_with_movement_elapsed(
+                    &rendered_buffer,
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 34);
+        assert_eq!(draw.columns, 9);
+        assert_eq!(draw.rows, 5);
+    }
+
+    #[test]
+    fn lane_patrol_without_room_in_rendered_buffer_stays_home() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 41);
+        let rendered_buffer = Buffer::empty(Rect::new(0, 36, 80, 5));
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::from_buffer_with_movement_elapsed(
+                    &rendered_buffer,
+                    Duration::from_millis(/*millis*/ 900),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 71);
+        assert_eq!(draw.y, 35);
+    }
+
+    #[test]
     fn lane_patrol_stays_home_when_animations_are_disabled() {
         let mut pet = test_ambient_pet(
             FrameRequester::test_dummy(),
@@ -1027,7 +1086,7 @@ mod tests {
     }
 
     #[test]
-    fn styled_blank_movement_target_draws_home() {
+    fn background_blank_movement_target_is_safe() {
         let mut pet = test_ambient_pet(
             FrameRequester::test_dummy(),
             /*animations_enabled*/ true,
@@ -1052,7 +1111,7 @@ mod tests {
             .expect("draw request");
 
         assert_eq!(draw.x, 71);
-        assert_eq!(draw.y, 18);
+        assert_eq!(draw.y, 12);
     }
 
     #[test]
