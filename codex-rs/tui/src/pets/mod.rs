@@ -22,6 +22,7 @@ mod catalog;
 mod frames;
 mod image_protocol;
 mod model;
+mod movement;
 mod picker;
 mod preview;
 mod sixel;

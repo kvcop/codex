@@ -33,6 +33,9 @@ use super::model::Animation;
 #[cfg(test)]
 use super::model::AnimationFrame;
 use super::model::Pet;
+use super::movement::MovementAnimationState;
+use super::movement::PetMovement;
+use super::movement::PetMovementTarget;
 
 const PET_TARGET_HEIGHT_PX: u16 = 75;
 const PET_COMPOSER_GAP_PX: u16 = 10;
@@ -133,6 +136,7 @@ pub(crate) struct AmbientPet {
     notification: Option<PetNotification>,
     animation_started_at: Instant,
     animations_enabled: bool,
+    movement: PetMovement,
 }
 
 impl AmbientPet {
@@ -172,6 +176,7 @@ impl AmbientPet {
             notification: None,
             animation_started_at: Instant::now(),
             animations_enabled,
+            movement: PetMovement::disabled(),
         })
     }
 
@@ -200,15 +205,33 @@ impl AmbientPet {
     }
 
     fn next_frame_delay(&self) -> Option<Duration> {
-        if self.support.protocol().is_none() || !self.animations_enabled {
+        if self.support.protocol().is_none() {
             return None;
         }
 
-        current_animation_frame(
-            self.current_animation()?,
-            self.animation_started_at.elapsed(),
-        )?
-        .delay
+        let movement_animation_state = if self.animations_enabled {
+            MovementAnimationState::Enabled
+        } else {
+            MovementAnimationState::Disabled
+        };
+        let movement_delay = self.movement.next_tick_delay(movement_animation_state);
+        if !self.animations_enabled {
+            return movement_delay;
+        }
+
+        let animation_delay = self
+            .current_animation()
+            .and_then(|animation| {
+                current_animation_frame(animation, self.animation_started_at.elapsed())
+            })
+            .and_then(|frame| frame.delay);
+        match (animation_delay, movement_delay) {
+            (Some(animation_delay), Some(movement_delay)) => {
+                Some(animation_delay.min(movement_delay))
+            }
+            (Some(delay), None) | (None, Some(delay)) => Some(delay),
+            (None, None) => None,
+        }
     }
 
     /// Build an image draw request for the ambient pet anchored above the composer.
@@ -233,16 +256,25 @@ impl AmbientPet {
             return None;
         }
 
-        let x = area.x + area.width.saturating_sub(size.columns);
-        let y = sprite_bottom_y.saturating_sub(size.rows);
+        let home = Rect::new(
+            area.x + area.width.saturating_sub(size.columns),
+            sprite_bottom_y.saturating_sub(size.rows),
+            size.columns,
+            size.rows,
+        );
+        let rect = self.movement.current_rect(
+            home,
+            PetMovementTarget::new(home.x, home.y),
+            Duration::ZERO,
+        );
         Some(AmbientPetDraw {
             frame: self.current_frame_path()?,
             protocol,
-            x,
-            y,
+            x: rect.x,
+            y: rect.y,
             clear_top_y: area.y,
-            columns: size.columns,
-            rows: size.rows,
+            columns: rect.width,
+            rows: rect.height,
             height_px: size.height_px,
             sixel_dir: self.sixel_dir.clone(),
         })
@@ -469,6 +501,7 @@ pub(crate) fn test_ambient_pet(
             .checked_sub(Duration::from_millis(/*millis*/ 15))
             .unwrap(),
         animations_enabled,
+        movement: PetMovement::disabled(),
     }
 }
 
