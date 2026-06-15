@@ -99,13 +99,19 @@ conflict with future upstream merges or need manual retesting after an update.
   target/debug/codex
   ```
 
-- The debug patrol moves vertically inside the rendered right-side pet lane.
-  Candidate target and in-flight sprite rectangles must fit inside the full
-  terminal screen, while any cells that overlap the current rendered buffer are
+- The debug patrol moves horizontally inside an expanded rendered right-side
+  pet lane. While `lane-patrol` is active, Codex reserves extra blank columns on
+  the right so the pet can run left and back without overlapping transcript or
+  composer text. Candidate target and in-flight sprite rectangles must fit
+  inside that lane, while any cells that overlap the current rendered buffer are
   still checked for safe blankness. Background color on whitespace is allowed
   because the pet image covers that background anyway; non-whitespace symbols,
   skipped cells, visual text modifiers, wide-glyph continuations, and
-  out-of-screen rectangles still keep the pet at home.
+  out-of-lane rectangles still keep the pet at home.
+- The patrol uses directional animation tracks while moving:
+  `running-left` on the outbound leg and `running-right` on the return leg,
+  falling back to the regular `running` track if a custom pet omits those
+  animations.
 - `animations = false` disables movement scheduling as well as frame animation.
   Rejected movement targets still keep the bounded movement cadence while the
   debug flag is on; identical draw dedupe suppresses redundant Kitty payloads.

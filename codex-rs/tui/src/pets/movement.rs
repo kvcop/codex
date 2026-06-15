@@ -49,6 +49,12 @@ impl PetMovementTarget {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PetMovementDirection {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PetMovement {
     mode: PetMovementMode,
 }
@@ -82,6 +88,18 @@ impl PetMovement {
         }
     }
 
+    pub(crate) fn current_horizontal_direction(
+        self,
+        home: Rect,
+        target: PetMovementTarget,
+        elapsed: Duration,
+    ) -> Option<PetMovementDirection> {
+        match self.mode {
+            PetMovementMode::Disabled => None,
+            PetMovementMode::LanePatrol => lane_patrol_horizontal_direction(home, target, elapsed),
+        }
+    }
+
     pub(crate) fn next_tick_delay(
         self,
         animation_state: MovementAnimationState,
@@ -96,9 +114,47 @@ impl PetMovement {
 }
 
 fn lane_patrol_rect(home: Rect, target: PetMovementTarget, elapsed: Duration) -> Rect {
+    let (from_x, from_y, to_x, to_y, progress_nanos) = lane_patrol_leg(home, target, elapsed);
+
+    Rect {
+        x: interpolate_axis(
+            from_x,
+            to_x,
+            progress_nanos,
+            LANE_PATROL_HALF_TRIP.as_nanos(),
+        ),
+        y: interpolate_axis(
+            from_y,
+            to_y,
+            progress_nanos,
+            LANE_PATROL_HALF_TRIP.as_nanos(),
+        ),
+        width: home.width,
+        height: home.height,
+    }
+}
+
+fn lane_patrol_horizontal_direction(
+    home: Rect,
+    target: PetMovementTarget,
+    elapsed: Duration,
+) -> Option<PetMovementDirection> {
+    let (from_x, _, to_x, _, _) = lane_patrol_leg(home, target, elapsed);
+    match to_x.cmp(&from_x) {
+        std::cmp::Ordering::Less => Some(PetMovementDirection::Left),
+        std::cmp::Ordering::Greater => Some(PetMovementDirection::Right),
+        std::cmp::Ordering::Equal => None,
+    }
+}
+
+fn lane_patrol_leg(
+    home: Rect,
+    target: PetMovementTarget,
+    elapsed: Duration,
+) -> (u16, u16, u16, u16, u128) {
     let elapsed_nanos = elapsed.as_nanos() % LANE_PATROL_PERIOD.as_nanos();
     let half_trip_nanos = LANE_PATROL_HALF_TRIP.as_nanos();
-    let (from_x, from_y, to_x, to_y, progress_nanos) = if elapsed_nanos <= half_trip_nanos {
+    if elapsed_nanos <= half_trip_nanos {
         (home.x, home.y, target.x, target.y, elapsed_nanos)
     } else {
         (
@@ -108,13 +164,6 @@ fn lane_patrol_rect(home: Rect, target: PetMovementTarget, elapsed: Duration) ->
             home.y,
             elapsed_nanos.saturating_sub(half_trip_nanos),
         )
-    };
-
-    Rect {
-        x: interpolate_axis(from_x, to_x, progress_nanos, half_trip_nanos),
-        y: interpolate_axis(from_y, to_y, progress_nanos, half_trip_nanos),
-        width: home.width,
-        height: home.height,
     }
 }
 

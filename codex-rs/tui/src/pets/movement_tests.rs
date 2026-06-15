@@ -47,6 +47,52 @@ fn lane_patrol_interpolates_horizontal_axis() {
 }
 
 #[test]
+fn lane_patrol_reports_horizontal_direction() {
+    let home = Rect::new(50, 20, 8, 5);
+    let target = PetMovementTarget::new(32, 20);
+
+    assert_eq!(
+        PetMovement::lane_patrol().current_horizontal_direction(
+            home,
+            target,
+            LANE_PATROL_HALF_TRIP / 2,
+        ),
+        Some(PetMovementDirection::Left)
+    );
+    assert_eq!(
+        PetMovement::lane_patrol().current_horizontal_direction(
+            home,
+            target,
+            LANE_PATROL_HALF_TRIP + LANE_PATROL_HALF_TRIP / 2,
+        ),
+        Some(PetMovementDirection::Right)
+    );
+    assert_eq!(
+        PetMovement::disabled().current_horizontal_direction(
+            home,
+            target,
+            LANE_PATROL_HALF_TRIP / 2,
+        ),
+        None
+    );
+}
+
+#[test]
+fn lane_patrol_reports_no_horizontal_direction_for_vertical_target() {
+    let home = Rect::new(50, 20, 8, 5);
+    let target = PetMovementTarget::new(50, 12);
+
+    assert_eq!(
+        PetMovement::lane_patrol().current_horizontal_direction(
+            home,
+            target,
+            LANE_PATROL_HALF_TRIP / 2,
+        ),
+        None
+    );
+}
+
+#[test]
 fn lane_patrol_interpolates_return_leg() {
     let home = Rect::new(80, 20, 8, 5);
     let target = PetMovementTarget::new(80, 12);

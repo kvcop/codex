@@ -1343,6 +1343,9 @@ See the Codex keymap documentation for supported actions and examples."
             terminal_size.width,
             terminal_size.height,
         );
+        let ambient_pet_movement_bounds = self
+            .chat_widget
+            .ambient_pet_movement_bounds(ambient_pet_area);
         let mut rendered_area = Rect::default();
         if !draw_ambient_pet_image {
             if terminal_resize_reflow_enabled {
@@ -1383,7 +1386,7 @@ See the Codex keymap documentation for supported actions and examples."
                     area.bottom(),
                     crate::pets::AmbientPetDrawContext::from_buffer_with_movement_bounds(
                         frame.buffer,
-                        ambient_pet_area,
+                        ambient_pet_movement_bounds,
                     ),
                 )
             })?
@@ -1401,7 +1404,7 @@ See the Codex keymap documentation for supported actions and examples."
                     area.bottom(),
                     crate::pets::AmbientPetDrawContext::from_buffer_with_movement_bounds(
                         frame.buffer,
-                        ambient_pet_area,
+                        ambient_pet_movement_bounds,
                     ),
                 )
             })?

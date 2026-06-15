@@ -24,6 +24,8 @@ Does movement remain acceptable across the terminal setups Вова actually use
 ## Candidate Checks
 
 - Run the debug binary with movement debug mode enabled.
+- Confirm the horizontal right-lane patrol has enough travel distance to be
+  visible and switches between `running-left` and `running-right` frames.
 - Trigger idle/running/waiting pet states.
 - Observe whether movement worsens the rare divider/tool-call disappearance.
 - Confirm transcript rendering remains readable when images do not render.

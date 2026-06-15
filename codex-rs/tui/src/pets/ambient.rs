@@ -40,12 +40,13 @@ use super::model::AnimationFrame;
 use super::model::Pet;
 use super::movement::MovementAnimationState;
 use super::movement::PetMovement;
+use super::movement::PetMovementDirection;
 use super::movement::PetMovementTarget;
 
 const PET_TARGET_HEIGHT_PX: u16 = 75;
 const PET_COMPOSER_GAP_PX: u16 = 10;
 const TERMINAL_ROW_HEIGHT_PX: u16 = 15;
-const LANE_PATROL_MAX_ROWS: u16 = 4;
+const LANE_PATROL_EXTRA_COLUMNS: u16 = 18;
 const UNSAFE_TUI_PET_MOVEMENT_ENV_VAR: &str = "CODEX_UNSAFE_TUI_PET_MOVEMENT";
 const MOVEMENT_LOG_TARGET: &str = "codex_tui::pets::movement";
 
@@ -196,6 +197,12 @@ impl<'a> AmbientPetDrawContext<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct MovementPlacement {
+    rect: Rect,
+    direction: Option<PetMovementDirection>,
+}
+
 #[derive(Debug)]
 pub(crate) struct AmbientPet {
     pet: Pet,
@@ -265,6 +272,14 @@ impl AmbientPet {
         self.image_size().columns
     }
 
+    pub(crate) fn movement_extra_columns(&self) -> u16 {
+        if self.movement_can_run() {
+            LANE_PATROL_EXTRA_COLUMNS
+        } else {
+            0
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn set_image_support_for_tests(&mut self, support: PetImageSupport) {
         self.support = support;
@@ -300,7 +315,7 @@ impl AmbientPet {
         }
 
         let animation_delay = self
-            .current_animation()
+            .current_animation(/*movement_direction*/ None)
             .and_then(|animation| {
                 current_animation_frame(animation, self.animation_started_at.elapsed())
             })
@@ -343,26 +358,26 @@ impl AmbientPet {
             size.columns,
             size.rows,
         );
-        let rect = self.movement_rect(protocol, home, context);
+        let placement = self.movement_placement(protocol, home, context);
         Some(AmbientPetDraw {
-            frame: self.current_frame_path()?,
+            frame: self.current_frame_path(placement.direction)?,
             protocol,
-            x: rect.x,
-            y: rect.y,
+            x: placement.rect.x,
+            y: placement.rect.y,
             clear_top_y: area.y,
-            columns: rect.width,
-            rows: rect.height,
+            columns: placement.rect.width,
+            rows: placement.rect.height,
             height_px: size.height_px,
             sixel_dir: self.sixel_dir.clone(),
         })
     }
 
-    fn movement_rect(
+    fn movement_placement(
         &self,
         protocol: ImageProtocol,
         home: Rect,
         context: AmbientPetDrawContext<'_>,
-    ) -> Rect {
+    ) -> MovementPlacement {
         if !protocol_allows_movement(protocol) {
             tracing::trace!(
                 target: MOVEMENT_LOG_TARGET,
@@ -370,7 +385,7 @@ impl AmbientPet {
                 ?home,
                 "pet movement disabled for image protocol"
             );
-            return home;
+            return MovementPlacement::home(home);
         }
         if !self.animations_enabled {
             tracing::trace!(
@@ -379,7 +394,7 @@ impl AmbientPet {
                 ?home,
                 "pet movement disabled because animations are disabled"
             );
-            return home;
+            return MovementPlacement::home(home);
         }
         if !self.movement.is_active() {
             tracing::trace!(
@@ -388,7 +403,7 @@ impl AmbientPet {
                 ?home,
                 "pet movement inactive"
             );
-            return home;
+            return MovementPlacement::home(home);
         }
 
         let Some(buffer) = context.buffer else {
@@ -398,7 +413,7 @@ impl AmbientPet {
                 ?home,
                 "pet movement has no rendered buffer context"
             );
-            return home;
+            return MovementPlacement::home(home);
         };
         let movement_bounds = context.movement_bounds.unwrap_or(buffer.area);
         let Some(target) = context
@@ -413,7 +428,7 @@ impl AmbientPet {
                 ?movement_bounds,
                 "pet movement target unavailable"
             );
-            return home;
+            return MovementPlacement::home(home);
         };
 
         let target_rect = Rect::new(target.x(), target.y(), home.width, home.height);
@@ -421,6 +436,9 @@ impl AmbientPet {
             .movement_elapsed
             .unwrap_or_else(|| self.movement_started_at.elapsed());
         let movement_rect = self.movement.current_rect(home, target, movement_elapsed);
+        let movement_direction =
+            self.movement
+                .current_horizontal_direction(home, target, movement_elapsed);
         let target_rejection = rect_blank_rejection(buffer, movement_bounds, target_rect);
         let movement_rejection = rect_blank_rejection(buffer, movement_bounds, movement_rect);
         if target_rejection.is_none() && movement_rejection.is_none() {
@@ -430,11 +448,15 @@ impl AmbientPet {
                 ?home,
                 ?target_rect,
                 ?movement_rect,
+                ?movement_direction,
                 ?movement_bounds,
                 movement_elapsed_ms = movement_elapsed.as_millis(),
                 "pet movement accepted"
             );
-            movement_rect
+            MovementPlacement {
+                rect: movement_rect,
+                direction: movement_direction,
+            }
         } else {
             tracing::trace!(
                 target: MOVEMENT_LOG_TARGET,
@@ -442,13 +464,14 @@ impl AmbientPet {
                 ?home,
                 ?target_rect,
                 ?movement_rect,
+                ?movement_direction,
                 ?movement_bounds,
                 movement_elapsed_ms = movement_elapsed.as_millis(),
                 ?target_rejection,
                 ?movement_rejection,
                 "pet movement rejected; drawing home"
             );
-            home
+            MovementPlacement::home(home)
         }
     }
 
@@ -484,7 +507,20 @@ impl AmbientPet {
             .filter(|notification| !notification.is_expired(now))
     }
 
-    fn current_animation(&self) -> Option<&Animation> {
+    fn current_animation(
+        &self,
+        movement_direction: Option<PetMovementDirection>,
+    ) -> Option<&Animation> {
+        if let Some(animation_name) = movement_animation_name(movement_direction)
+            && let Some(animation) = self
+                .pet
+                .animations
+                .get(animation_name)
+                .or_else(|| self.pet.animations.get("running"))
+        {
+            return Some(animation);
+        }
+
         let animation_name = self
             .visible_notification(Instant::now())
             .map_or("idle", |notification| notification.kind.animation_name());
@@ -504,9 +540,12 @@ impl AmbientPet {
         Some(animation)
     }
 
-    fn current_frame_path(&self) -> Option<PathBuf> {
+    fn current_frame_path(
+        &self,
+        movement_direction: Option<PetMovementDirection>,
+    ) -> Option<PathBuf> {
         let sprite_index = self
-            .current_animation()
+            .current_animation(movement_direction)
             .and_then(|animation| {
                 if self.animations_enabled {
                     current_animation_frame(animation, self.animation_started_at.elapsed())
@@ -546,6 +585,32 @@ impl AmbientPet {
             rows,
             height_px: PET_TARGET_HEIGHT_PX,
         }
+    }
+
+    fn movement_can_run(&self) -> bool {
+        self.animations_enabled
+            && self.movement.is_active()
+            && self
+                .support
+                .protocol()
+                .is_some_and(protocol_allows_movement)
+    }
+}
+
+impl MovementPlacement {
+    const fn home(home: Rect) -> Self {
+        Self {
+            rect: home,
+            direction: None,
+        }
+    }
+}
+
+fn movement_animation_name(direction: Option<PetMovementDirection>) -> Option<&'static str> {
+    match direction {
+        Some(PetMovementDirection::Left) => Some("running-left"),
+        Some(PetMovementDirection::Right) => Some("running-right"),
+        None => None,
     }
 }
 
@@ -796,10 +861,24 @@ pub(crate) fn test_ambient_pet(
             columns: 8,
             rows: 9,
             frame_count: 72,
-            animations: HashMap::from([("idle".to_string(), test_animation())]),
+            animations: HashMap::from([
+                ("idle".to_string(), test_animation()),
+                (
+                    "running-left".to_string(),
+                    test_single_frame_animation(/*sprite_index*/ 1),
+                ),
+                (
+                    "running-right".to_string(),
+                    test_single_frame_animation(/*sprite_index*/ 2),
+                ),
+            ]),
         },
         support: PetImageSupport::Supported(ImageProtocol::Kitty),
-        frames: vec![PathBuf::from("frame-0.png"), PathBuf::from("frame-1.png")],
+        frames: vec![
+            PathBuf::from("frame-0.png"),
+            PathBuf::from("frame-1.png"),
+            PathBuf::from("frame-2.png"),
+        ],
         sixel_dir: PathBuf::new(),
         frame_requester,
         notification: None,
@@ -837,24 +916,21 @@ fn lane_patrol_target(home: Rect, movement_bounds: Rect) -> Option<PetMovementTa
         || home.height == 0
         || home.x < movement_bounds.x
         || home.right() > movement_bounds.right()
+        || home.y < movement_bounds.y
+        || home.bottom() > movement_bounds.bottom()
     {
         return None;
     }
 
-    let lowest_home_y_inside_bounds = movement_bounds.bottom().checked_sub(home.height)?;
-    if lowest_home_y_inside_bounds < movement_bounds.y {
+    let columns_left = home
+        .x
+        .saturating_sub(movement_bounds.x)
+        .min(LANE_PATROL_EXTRA_COLUMNS);
+    if columns_left == 0 {
         return None;
     }
 
-    let bounded_home_y = home.y.min(lowest_home_y_inside_bounds);
-    let rows_up = bounded_home_y
-        .saturating_sub(movement_bounds.y)
-        .min(LANE_PATROL_MAX_ROWS);
-    if rows_up == 0 {
-        return None;
-    }
-
-    let target = PetMovementTarget::new(home.x, bounded_home_y - rows_up);
+    let target = PetMovementTarget::new(home.x - columns_left, home.y);
     let target_rect = Rect::new(target.x(), target.y(), home.width, home.height);
     rect_is_inside(target_rect, movement_bounds).then_some(target)
 }
@@ -879,6 +955,18 @@ fn test_animation() -> Animation {
                 duration: Duration::from_millis(/*millis*/ 10),
             },
         ],
+        loop_start: Some(/*loop_start*/ 0),
+        fallback: "idle".to_string(),
+    }
+}
+
+#[cfg(test)]
+fn test_single_frame_animation(sprite_index: usize) -> Animation {
+    Animation {
+        frames: vec![AnimationFrame {
+            sprite_index,
+            duration: Duration::from_millis(/*millis*/ 10),
+        }],
         loop_start: Some(/*loop_start*/ 0),
         fallback: "idle".to_string(),
     }
@@ -918,7 +1006,10 @@ mod tests {
             /*animations_enabled*/ false,
         );
 
-        assert_eq!(pet.current_frame_path(), Some(PathBuf::from("frame-0.png")));
+        assert_eq!(
+            pet.current_frame_path(/*movement_direction*/ None),
+            Some(PathBuf::from("frame-0.png"))
+        );
         assert_eq!(pet.next_frame_delay(), None);
     }
 
@@ -972,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn lane_patrol_from_rendered_buffer_moves_inside_right_lane() {
+    fn lane_patrol_from_rendered_buffer_moves_left_inside_right_lane() {
         let mut pet = test_ambient_pet(
             FrameRequester::test_dummy(),
             /*animations_enabled*/ true,
@@ -992,10 +1083,37 @@ mod tests {
             )
             .expect("draw request");
 
-        assert_eq!(draw.x, 71);
-        assert_eq!(draw.y, 14);
+        assert_eq!(draw.x, 53);
+        assert_eq!(draw.y, 18);
+        assert_eq!(draw.frame, PathBuf::from("frame-1.png"));
         assert_eq!(draw.columns, 9);
         assert_eq!(draw.rows, 5);
+    }
+
+    #[test]
+    fn lane_patrol_return_leg_uses_right_running_frame() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.enable_lane_patrol_for_tests();
+        let area = Rect::new(0, 0, 80, 24);
+        let buffer = Buffer::empty(area);
+
+        let draw = pet
+            .draw_request(
+                area,
+                area.bottom(),
+                AmbientPetDrawContext::from_buffer_with_movement_elapsed(
+                    &buffer,
+                    Duration::from_millis(/*millis*/ 1350),
+                ),
+            )
+            .expect("draw request");
+
+        assert_eq!(draw.x, 62);
+        assert_eq!(draw.y, 18);
+        assert_eq!(draw.frame, PathBuf::from("frame-2.png"));
     }
 
     #[test]
@@ -1019,8 +1137,8 @@ mod tests {
             )
             .expect("draw request");
 
-        assert_eq!(draw.x, 71);
-        assert_eq!(draw.y, 34);
+        assert_eq!(draw.x, 53);
+        assert_eq!(draw.y, 35);
         assert_eq!(draw.columns, 9);
         assert_eq!(draw.rows, 5);
     }
@@ -1047,8 +1165,8 @@ mod tests {
             )
             .expect("draw request");
 
-        assert_eq!(draw.x, 71);
-        assert_eq!(draw.y, 14);
+        assert_eq!(draw.x, 53);
+        assert_eq!(draw.y, 18);
         assert_eq!(draw.columns, 9);
         assert_eq!(draw.rows, 5);
     }
@@ -1062,7 +1180,7 @@ mod tests {
         pet.enable_lane_patrol_for_tests();
         let area = Rect::new(0, 0, 80, 24);
         let mut rendered_buffer = Buffer::empty(Rect::new(0, 18, 80, 6));
-        rendered_buffer[(71, 18)]
+        rendered_buffer[(53, 18)]
             .set_symbol("X")
             .set_style(Style::default());
 
@@ -1144,6 +1262,21 @@ mod tests {
             PetMovement::disabled()
         );
         assert_eq!(movement_from_env_value(None), PetMovement::disabled());
+    }
+
+    #[test]
+    fn movement_extra_columns_are_reserved_only_when_debug_movement_can_run() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        assert_eq!(pet.movement_extra_columns(), 0);
+
+        pet.enable_lane_patrol_for_tests();
+        assert_eq!(pet.movement_extra_columns(), LANE_PATROL_EXTRA_COLUMNS);
+
+        pet.set_image_support_for_tests(PetImageSupport::Supported(ImageProtocol::Sixel));
+        assert_eq!(pet.movement_extra_columns(), 0);
     }
 
     #[test]

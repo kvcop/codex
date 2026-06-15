@@ -157,8 +157,19 @@ impl ChatWidget {
             .map(|pet| {
                 pet.image_columns()
                     .saturating_add(AMBIENT_PET_WRAP_GAP_COLUMNS)
+                    .saturating_add(pet.movement_extra_columns())
             })
             .unwrap_or(0)
+    }
+
+    pub(crate) fn ambient_pet_movement_bounds(&self, area: Rect) -> Rect {
+        let width = self.ambient_pet_wrap_reserved_cols().min(area.width);
+        Rect::new(
+            area.right().saturating_sub(width),
+            area.y,
+            width,
+            area.height,
+        )
     }
 
     pub(crate) fn history_wrap_width(&self, width: u16) -> u16 {
