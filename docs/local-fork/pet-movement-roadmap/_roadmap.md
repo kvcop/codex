@@ -130,6 +130,9 @@ Plan 01: movement substrate
   wrap width. It uses an expanded right-side candidate lane only when the
   rendered-buffer cells are blank, and movement loops the action frames so the
   pet does not slide in an idle pose.
+- 2026-06-16: The fork was updated through `rust-v0.140.0`; the only manual
+  merge conflict was the workspace version in `codex-rs/Cargo.toml`, and the
+  local markdown/pet/plan-nudge fork behavior remained in place.
 
 ## Resume Instructions
 

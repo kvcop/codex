@@ -6,9 +6,9 @@ conflict with future upstream merges or need manual retesting after an update.
 
 ## Markdown Tables
 
-- Branch lineage: `fix/md-tables-rust-v0.137.0-new`, merged from
-  `fix/md-tables-rust-v0.136.0-new`.
-- Upstream `rust-v0.137.0` still includes the primary key/value record fallback
+- Branch lineage: `fix/md-tables-rust-v0.140.0-new`, merged from
+  `fix/md-tables-rust-v0.139.0-new`.
+- Upstream `rust-v0.140.0` still includes the primary key/value record fallback
   for cramped markdown tables and preserves OSC 8 hyperlink metadata through
   that renderer. Keep the upstream renderer as the base unless a regression is
   proven locally.
@@ -22,9 +22,9 @@ conflict with future upstream merges or need manual retesting after an update.
 - Streaming behavior holds incomplete pipe-table chunks until the header
   delimiter confirms a table, then renders the live table instead of showing raw
   markdown line-by-line.
-- Upstream `rust-v0.136.0` added official table streaming/rendering changes, and
-  `rust-v0.137.0` did not replace the local readability guards, so local
-  streaming tests should be kept mainly as regression coverage for the
+- Upstream `rust-v0.136.0` added official table streaming/rendering changes,
+  and `rust-v0.140.0` still does not replace the local readability guards, so
+  local streaming tests should be kept mainly as regression coverage for the
   raw-markdown flicker cases seen with larger models.
 - Retest after each upstream merge:
   - wide Russian tables with many columns;
