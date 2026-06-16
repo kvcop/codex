@@ -126,6 +126,10 @@ Plan 01: movement substrate
   evidence showed the vertical patrol was technically alive but too subtle, so
   the debug `lane-patrol` direction changed to horizontal inside an expanded
   right-side lane with `running-left` / `running-right` frame selection.
+- 2026-06-16: Horizontal patrol no longer reserves extra transcript/composer
+  wrap width. It uses an expanded right-side candidate lane only when the
+  rendered-buffer cells are blank, and movement loops the action frames so the
+  pet does not slide in an idle pose.
 
 ## Resume Instructions
 

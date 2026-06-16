@@ -61,9 +61,10 @@ on. The roadmap remains the control surface; this file is the evidence appendix.
   or flicker evidence requires it.
 - First-wave debug movement is Kitty-first. Sixel keeps the pet at home unless
   a later manual validation explicitly promotes Sixel movement.
-- The first debug movement lane is the right-side reserved pet column area
-  inside the current rendered buffer. It is not the gap between composer-bottom
-  and screen-bottom anchors because that gap can be zero in the normal inline
+- The first debug movement lane extends left from the right-side pet reserve as
+  a candidate area, but it does not shrink transcript/composer wrap width beyond
+  the normal static pet reserve. It is not the gap between composer-bottom and
+  screen-bottom anchors because that gap can be zero in the normal inline
   viewport.
 - Candidate movement rects outside the rendered buffer are unsafe. Codex cannot
   inspect terminal scrollback cells above the rendered viewport, so unknown cells

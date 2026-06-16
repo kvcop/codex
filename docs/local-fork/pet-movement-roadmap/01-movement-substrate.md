@@ -56,10 +56,11 @@ idle/screensaver/composer personality.
 - A visible debug patrol inside the right-side lane is enough to validate timing,
   redraw, and tmux behavior before behavior-heavy modes.
 - `CODEX_UNSAFE_TUI_PETS_PROTOCOL=kitty` remains the expected tmux test setup.
-- The first useful patrol route is horizontal movement within an expanded
-  rendered right-side pet reserve, from home left by a bounded number of
-  columns and back. The earlier vertical route proved technically alive but too
-  subtle for manual validation.
+- The first useful patrol route is horizontal movement through an expanded
+  right-side candidate lane, from home left by a bounded number of columns and
+  back. It must not reserve extra transcript/composer wrap width; if candidate
+  cells are not blank, the pet stays home or takes a shorter route. The earlier
+  vertical route proved technically alive but too subtle for manual validation.
 
 **Non-goals:**
 - No idle screensaver behavior.
@@ -113,8 +114,8 @@ terminal image protocol output.
 - Movement does not choose behavior targets; it only follows a supplied safe
   target.
 - The first lane-patrol route is supplied already bounded to the right-side
-  reserved pet columns; buffer ownership is checked by the draw-context wiring,
-  not by the pure movement model.
+  candidate lane; buffer ownership is checked by the draw-context wiring, not
+  by the pure movement model.
 
 **Acceptance criteria:**
 - [ ] Unit tests cover disabled movement returning home exactly.
@@ -216,8 +217,8 @@ inside Kitty/tmux before any behavior mode is planned.
 **Outputs:**
 - `CODEX_UNSAFE_TUI_PET_MOVEMENT=lane-patrol` enables a small right-lane patrol
   only for Kitty/KittyLocalFile protocols. The patrol moves horizontally inside
-  an expanded rendered right-side reserve, from home left by a bounded distance
-  and back.
+  an expanded rendered right-side candidate lane, from home left by a bounded
+  distance and back, without shrinking normal transcript/composer wrap width.
 - Unknown env values are silently ignored, matching the local unsafe pet
   protocol override style.
 - `animations = false` disables movement scheduling.

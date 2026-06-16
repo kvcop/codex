@@ -1719,6 +1719,38 @@ async fn ambient_pet_reserves_history_wrap_width() {
 
 #[tokio::test]
 #[serial]
+async fn ambient_pet_movement_does_not_reserve_extra_history_wrap_width() {
+    let area = Rect::new(0, 0, 80, 24);
+    let (mut base_chat, _base_rx, _base_op_rx) =
+        make_chatwidget_manual(/*model_override*/ None).await;
+    enable_test_ambient_pet(&mut base_chat);
+    let base_wrap_width = base_chat.history_wrap_width(/*width*/ 80);
+    let base_movement_bounds = base_chat.ambient_pet_movement_bounds(area);
+
+    let (mut moving_chat, _moving_rx, _moving_op_rx) =
+        make_chatwidget_manual(/*model_override*/ None).await;
+    moving_chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Supported(
+        crate::pets::ImageProtocol::Kitty,
+    ));
+    moving_chat.install_test_ambient_pet_for_tests(/*animations_enabled*/ true);
+    moving_chat
+        .ambient_pet
+        .as_mut()
+        .expect("test ambient pet")
+        .enable_lane_patrol_for_tests();
+
+    assert_eq!(
+        moving_chat.history_wrap_width(/*width*/ 80),
+        base_wrap_width
+    );
+    assert!(
+        moving_chat.ambient_pet_movement_bounds(area).width > base_movement_bounds.width,
+        "movement can inspect a wider candidate lane without shrinking transcript text"
+    );
+}
+
+#[tokio::test]
+#[serial]
 async fn ambient_pet_reduces_stream_width_and_composer_text_width() {
     use ratatui::Terminal;
 

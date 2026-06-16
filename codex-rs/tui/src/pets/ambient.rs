@@ -35,7 +35,6 @@ use super::image_protocol::PetImageSupport;
 #[cfg(not(test))]
 use super::image_protocol::ProtocolSelection;
 use super::model::Animation;
-#[cfg(test)]
 use super::model::AnimationFrame;
 use super::model::Pet;
 use super::movement::MovementAnimationState;
@@ -272,7 +271,7 @@ impl AmbientPet {
         self.image_size().columns
     }
 
-    pub(crate) fn movement_extra_columns(&self) -> u16 {
+    pub(crate) fn movement_candidate_extra_columns(&self) -> u16 {
         if self.movement_can_run() {
             LANE_PATROL_EXTRA_COLUMNS
         } else {
@@ -286,7 +285,7 @@ impl AmbientPet {
     }
 
     #[cfg(test)]
-    fn enable_lane_patrol_for_tests(&mut self) {
+    pub(crate) fn enable_lane_patrol_for_tests(&mut self) {
         self.movement = PetMovement::lane_patrol();
         self.movement_started_at = Instant::now();
     }
@@ -511,14 +510,12 @@ impl AmbientPet {
         &self,
         movement_direction: Option<PetMovementDirection>,
     ) -> Option<&Animation> {
-        if let Some(animation_name) = movement_animation_name(movement_direction)
-            && let Some(animation) = self
-                .pet
-                .animations
-                .get(animation_name)
-                .or_else(|| self.pet.animations.get("running"))
-        {
-            return Some(animation);
+        if let Some(direction) = movement_direction {
+            for animation_name in movement_animation_names(direction) {
+                if let Some(animation) = self.pet.animations.get(*animation_name) {
+                    return Some(animation);
+                }
+            }
         }
 
         let animation_name = self
@@ -548,8 +545,13 @@ impl AmbientPet {
             .current_animation(movement_direction)
             .and_then(|animation| {
                 if self.animations_enabled {
-                    current_animation_frame(animation, self.animation_started_at.elapsed())
-                        .map(|frame| frame.sprite_index)
+                    let elapsed = self.animation_started_at.elapsed();
+                    let frame = if movement_direction.is_some() {
+                        current_movement_animation_frame(animation, elapsed)
+                    } else {
+                        current_animation_frame(animation, elapsed)
+                    };
+                    frame.map(|frame| frame.sprite_index)
                 } else {
                     animation.frames.first().map(|frame| frame.sprite_index)
                 }
@@ -606,11 +608,10 @@ impl MovementPlacement {
     }
 }
 
-fn movement_animation_name(direction: Option<PetMovementDirection>) -> Option<&'static str> {
+fn movement_animation_names(direction: PetMovementDirection) -> &'static [&'static str] {
     match direction {
-        Some(PetMovementDirection::Left) => Some("running-left"),
-        Some(PetMovementDirection::Right) => Some("running-right"),
-        None => None,
+        PetMovementDirection::Left => &["move_left", "running-left", "running"],
+        PetMovementDirection::Right => &["move_right", "running-right", "running"],
     }
 }
 
@@ -680,9 +681,39 @@ fn current_animation_frame(animation: &Animation, elapsed: Duration) -> Option<A
     }
 }
 
+fn current_movement_animation_frame(
+    animation: &Animation,
+    elapsed: Duration,
+) -> Option<AnimationFrameTick> {
+    let Some(action_end) = animation
+        .loop_start
+        .filter(|idx| *idx > 0 && *idx <= animation.frames.len())
+    else {
+        return current_animation_frame(animation, elapsed);
+    };
+
+    let action_frames = &animation.frames[..action_end];
+    let action_nanos = action_frames
+        .iter()
+        .map(|frame| frame.duration.as_nanos())
+        .sum::<u128>();
+    if action_nanos == 0 {
+        return current_animation_frame(animation, elapsed);
+    }
+
+    frame_at_elapsed_in_frames(action_frames, elapsed.as_nanos() % action_nanos)
+}
+
 fn frame_at_elapsed(animation: &Animation, elapsed_nanos: u128) -> Option<AnimationFrameTick> {
+    frame_at_elapsed_in_frames(&animation.frames, elapsed_nanos)
+}
+
+fn frame_at_elapsed_in_frames(
+    frames: &[AnimationFrame],
+    elapsed_nanos: u128,
+) -> Option<AnimationFrameTick> {
     let mut remaining_elapsed = elapsed_nanos;
-    for frame in &animation.frames {
+    for frame in frames {
         let frame_nanos = frame.duration.as_nanos().max(/*other*/ 1);
         if remaining_elapsed < frame_nanos {
             return Some(AnimationFrameTick {
@@ -694,7 +725,7 @@ fn frame_at_elapsed(animation: &Animation, elapsed_nanos: u128) -> Option<Animat
     }
 
     Some(AnimationFrameTick {
-        sprite_index: animation.frames.last()?.sprite_index,
+        sprite_index: frames.last()?.sprite_index,
         delay: None,
     })
 }
@@ -865,11 +896,11 @@ pub(crate) fn test_ambient_pet(
                 ("idle".to_string(), test_animation()),
                 (
                     "running-left".to_string(),
-                    test_single_frame_animation(/*sprite_index*/ 1),
+                    test_action_then_idle_animation(/*action_sprite_index*/ 1),
                 ),
                 (
                     "running-right".to_string(),
-                    test_single_frame_animation(/*sprite_index*/ 2),
+                    test_action_then_idle_animation(/*action_sprite_index*/ 2),
                 ),
             ]),
         },
@@ -968,6 +999,24 @@ fn test_single_frame_animation(sprite_index: usize) -> Animation {
             duration: Duration::from_millis(/*millis*/ 10),
         }],
         loop_start: Some(/*loop_start*/ 0),
+        fallback: "idle".to_string(),
+    }
+}
+
+#[cfg(test)]
+fn test_action_then_idle_animation(action_sprite_index: usize) -> Animation {
+    Animation {
+        frames: vec![
+            AnimationFrame {
+                sprite_index: action_sprite_index,
+                duration: Duration::from_millis(/*millis*/ 10),
+            },
+            AnimationFrame {
+                sprite_index: 0,
+                duration: Duration::from_millis(/*millis*/ 10),
+            },
+        ],
+        loop_start: Some(/*loop_start*/ 1),
         fallback: "idle".to_string(),
     }
 }
@@ -1265,18 +1314,39 @@ mod tests {
     }
 
     #[test]
-    fn movement_extra_columns_are_reserved_only_when_debug_movement_can_run() {
+    fn movement_candidate_extra_columns_are_available_only_when_debug_movement_can_run() {
         let mut pet = test_ambient_pet(
             FrameRequester::test_dummy(),
             /*animations_enabled*/ true,
         );
-        assert_eq!(pet.movement_extra_columns(), 0);
+        assert_eq!(pet.movement_candidate_extra_columns(), 0);
 
         pet.enable_lane_patrol_for_tests();
-        assert_eq!(pet.movement_extra_columns(), LANE_PATROL_EXTRA_COLUMNS);
+        assert_eq!(
+            pet.movement_candidate_extra_columns(),
+            LANE_PATROL_EXTRA_COLUMNS
+        );
 
         pet.set_image_support_for_tests(PetImageSupport::Supported(ImageProtocol::Sixel));
-        assert_eq!(pet.movement_extra_columns(), 0);
+        assert_eq!(pet.movement_candidate_extra_columns(), 0);
+    }
+
+    #[test]
+    fn movement_direction_prefers_move_animation_aliases() {
+        let mut pet = test_ambient_pet(
+            FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+        pet.frames.push(PathBuf::from("frame-3.png"));
+        pet.pet.animations.insert(
+            "move_left".to_string(),
+            test_single_frame_animation(/*sprite_index*/ 3),
+        );
+
+        assert_eq!(
+            pet.current_frame_path(Some(PetMovementDirection::Left)),
+            Some(PathBuf::from("frame-3.png"))
+        );
     }
 
     #[test]

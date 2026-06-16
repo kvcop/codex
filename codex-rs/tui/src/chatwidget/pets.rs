@@ -157,13 +157,21 @@ impl ChatWidget {
             .map(|pet| {
                 pet.image_columns()
                     .saturating_add(AMBIENT_PET_WRAP_GAP_COLUMNS)
-                    .saturating_add(pet.movement_extra_columns())
             })
             .unwrap_or(0)
     }
 
     pub(crate) fn ambient_pet_movement_bounds(&self, area: Rect) -> Rect {
-        let width = self.ambient_pet_wrap_reserved_cols().min(area.width);
+        let movement_extra_cols = self
+            .ambient_pet
+            .as_ref()
+            .filter(|pet| pet.image_enabled())
+            .map(crate::pets::AmbientPet::movement_candidate_extra_columns)
+            .unwrap_or(0);
+        let width = self
+            .ambient_pet_wrap_reserved_cols()
+            .saturating_add(movement_extra_cols)
+            .min(area.width);
         Rect::new(
             area.right().saturating_sub(width),
             area.y,

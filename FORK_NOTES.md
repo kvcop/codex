@@ -99,19 +99,21 @@ conflict with future upstream merges or need manual retesting after an update.
   target/debug/codex
   ```
 
-- The debug patrol moves horizontally inside an expanded rendered right-side
-  pet lane. While `lane-patrol` is active, Codex reserves extra blank columns on
-  the right so the pet can run left and back without overlapping transcript or
-  composer text. Candidate target and in-flight sprite rectangles must fit
-  inside that lane, while any cells that overlap the current rendered buffer are
-  still checked for safe blankness. Background color on whitespace is allowed
-  because the pet image covers that background anyway; non-whitespace symbols,
-  skipped cells, visual text modifiers, wide-glyph continuations, and
-  out-of-lane rectangles still keep the pet at home.
+- The debug patrol moves horizontally inside a right-side candidate lane. It
+  does not reserve extra transcript/composer wrap width for movement; normal
+  pet image reserve stays unchanged. Candidate target and in-flight sprite
+  rectangles may extend left into the candidate lane only when every overlapping
+  rendered-buffer cell is safe blank space. Background color on whitespace is
+  allowed because the pet image covers that background anyway; non-whitespace
+  symbols, skipped cells, visual text modifiers, wide-glyph continuations, and
+  out-of-lane rectangles still keep the pet at home. Long lines may therefore
+  shorten or suppress the patrol instead of losing text width.
 - The patrol uses directional animation tracks while moving:
-  `running-left` on the outbound leg and `running-right` on the return leg,
-  falling back to the regular `running` track if a custom pet omits those
-  animations.
+  `move_left`/`running-left` on the outbound leg and
+  `move_right`/`running-right` on the return leg, falling back to the regular
+  `running` track if a custom pet omits those animations. For generated
+  animations that append idle frames after the action segment, movement loops
+  the action segment so the pet does not slide in an idle pose.
 - `animations = false` disables movement scheduling as well as frame animation.
   Rejected movement targets still keep the bounded movement cadence while the
   debug flag is on; identical draw dedupe suppresses redundant Kitty payloads.
