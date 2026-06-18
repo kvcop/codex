@@ -18,6 +18,7 @@
 | `docs/local-fork/pet-movement-roadmap/02-idle-screensaver-grill.md` | First unresolved decision is whether idle movement starts opt-in or automatically whenever pets are enabled. |
 | `FORK_NOTES.md` | Current `lane-patrol` is accepted only as a test baseline; returning home when text enters the lane can still teleport and is debug-only. |
 | User answer, 2026-06-18 | This is for a personal fork, so playful idle movement can default on as long as there is a flag/settings switch to disable it. |
+| User answer, 2026-06-18 | The disable control should exist in both config and `/pets` UI. |
 
 ## Question Log
 ### Q1 - Idle Movement Rollout Mode
@@ -36,6 +37,17 @@ becomes a more advanced screensaver, that should also default on.
 **Decision:** accepted, revised from the recommended answer
 **Class if unresolved:** none
 
+### Q2 - Idle Movement Control Surface
+**Why this matters:** The disable switch can be config-only, `/pets` UI-only, or
+both. This affects config schema, settings persistence, `/pets` picker scope,
+and tests.
+**Recommended answer:** Add both layers: a stable config key such as
+`tui.pet_idle_movement = false` and a `/pets` UI toggle. Default the setting to
+`true` in this personal fork.
+**User answer:** Yes.
+**Decision:** accepted
+**Class if unresolved:** none
+
 ## Accepted Decisions
 1. **Decision:** Idle screensaver movement defaults on in this personal fork,
    but must have an explicit disable switch.
@@ -51,11 +63,15 @@ becomes a more advanced screensaver, that should also default on.
    **Rationale:** Manual validation needs fast feedback on route correctness
    without waiting five minutes per cycle.
    **Evidence:** User answer on 2026-06-18.
+4. **Decision:** The idle movement disable control should exist both in config
+   and in the `/pets` UI.
+   **Rationale:** Config gives a stable durable switch, while `/pets` makes the
+   feature easy to turn off if the default-on behavior gets distracting.
+   **Evidence:** User answer on 2026-06-18.
 
 ## Open Items
 | Item | Class | Why It Matters | Proposed Next Step |
 |---|---|---|---|
-| Exact control surface | requires_grill | The disable switch can be config-only, `/pets` UI, or both; this affects scope and tests. | Ask Q2. |
 | Idle timing model | requires_grill | Plan 02 needs precise enough defaults for production behavior and debug behavior. | Resolve after Q2 or Q3. |
 | Advanced screensaver scope | future-note | Default-on applies if promoted, but advanced behavior may need more safety rules than lane patrol. | Keep out of Plan 02 unless explicitly promoted. |
 
