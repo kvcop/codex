@@ -19,6 +19,7 @@
 | `FORK_NOTES.md` | Current `lane-patrol` is accepted only as a test baseline; returning home when text enters the lane can still teleport and is debug-only. |
 | User answer, 2026-06-18 | This is for a personal fork, so playful idle movement can default on as long as there is a flag/settings switch to disable it. |
 | User answer, 2026-06-18 | The disable control should exist in both config and `/pets` UI. |
+| User answer, 2026-06-18 | Accepted the recommended idle timing model: sparse normal cadence, accelerated debug cadence, and reset-on-user-activity or lane collision. |
 
 ## Question Log
 ### Q1 - Idle Movement Rollout Mode
@@ -48,6 +49,21 @@ and tests.
 **Decision:** accepted
 **Class if unresolved:** none
 
+### Q3 - Idle Timing Model
+**Why this matters:** Plan 02 needs concrete timing defaults so movement does
+not become constant visual noise, and debug builds still need fast manual
+feedback.
+**Recommended answer:** Normal mode starts a walk after about five minutes of
+idle, walks to the target, waits 60-120 seconds, returns home, then waits
+another five minutes before trying again. Debug mode keeps the same phase model
+but accelerates it, for example with a `fast` mode or about `0.02x` timing so
+five minutes becomes roughly six seconds and a 60-120 second pause becomes
+roughly 1-2 seconds. Any user action or rendered text entering the movement
+lane sends the pet home and resets the idle timer.
+**User answer:** Try that.
+**Decision:** accepted
+**Class if unresolved:** none
+
 ## Accepted Decisions
 1. **Decision:** Idle screensaver movement defaults on in this personal fork,
    but must have an explicit disable switch.
@@ -68,11 +84,21 @@ and tests.
    **Rationale:** Config gives a stable durable switch, while `/pets` makes the
    feature easy to turn off if the default-on behavior gets distracting.
    **Evidence:** User answer on 2026-06-18.
+5. **Decision:** Idle movement uses a sparse phase cadence in normal mode and a
+   fast equivalent for debug/manual validation.
+   **Rationale:** The normal behavior should feel like occasional life, not a
+   looping distraction. The debug behavior should preserve the same logic while
+   making route/timing bugs visible quickly.
+   **Evidence:** User answer on 2026-06-18.
+6. **Decision:** User activity or lane collision sends the pet home and resets
+   the idle timer.
+   **Rationale:** Movement must yield immediately to reading and interaction,
+   and should not keep trying to occupy a lane once text enters it.
+   **Evidence:** User answer on 2026-06-18.
 
 ## Open Items
 | Item | Class | Why It Matters | Proposed Next Step |
 |---|---|---|---|
-| Idle timing model | requires_grill | Plan 02 needs precise enough defaults for production behavior and debug behavior. | Resolve after Q2 or Q3. |
 | Advanced screensaver scope | future-note | Default-on applies if promoted, but advanced behavior may need more safety rules than lane patrol. | Keep out of Plan 02 unless explicitly promoted. |
 
 ## Promotion Signals
