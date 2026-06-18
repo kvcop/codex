@@ -74,7 +74,10 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
         .filter(|(_, cmd)| flags.collaboration_modes_enabled || *cmd != SlashCommand::Plan)
         .filter(|(_, cmd)| flags.connectors_enabled || *cmd != SlashCommand::Apps)
         .filter(|(_, cmd)| flags.plugins_command_enabled || *cmd != SlashCommand::Plugins)
-        .filter(|(_, cmd)| flags.token_activity_command_enabled || *cmd != SlashCommand::Usage)
+        .filter(|(_, cmd)| {
+            flags.token_activity_command_enabled
+                || !matches!(*cmd, SlashCommand::Usage | SlashCommand::ResetUsage)
+        })
         .filter(|(_, cmd)| flags.goal_command_enabled || *cmd != SlashCommand::Goal)
         .filter(|(_, cmd)| flags.personality_command_enabled || *cmd != SlashCommand::Personality)
         .filter(|(_, cmd)| !flags.side_conversation_active || cmd.available_in_side_conversation())
@@ -268,15 +271,15 @@ mod tests {
     }
 
     #[test]
-    fn usage_command_is_hidden_from_input_when_account_token_activity_is_disabled() {
+    fn account_usage_commands_are_hidden_from_input_when_account_token_activity_is_disabled() {
         let mut flags = all_enabled_flags();
         flags.token_activity_command_enabled = false;
-        assert_eq!(
-            builtins_for_input(flags)
-                .into_iter()
-                .find(|(_, command)| *command == SlashCommand::Usage),
-            None
-        );
+        let commands = builtins_for_input(flags)
+            .into_iter()
+            .map(|(_, command)| command)
+            .collect::<Vec<_>>();
+        assert!(!commands.contains(&SlashCommand::Usage));
+        assert!(!commands.contains(&SlashCommand::ResetUsage));
     }
 
     #[test]
@@ -308,6 +311,7 @@ mod tests {
                 SlashCommand::Diff,
                 SlashCommand::Mention,
                 SlashCommand::Status,
+                SlashCommand::ResetUsage,
                 SlashCommand::Usage,
             ]
         );

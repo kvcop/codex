@@ -1,5 +1,15 @@
 use super::*;
 use assert_matches::assert_matches;
+use codex_app_server_protocol::ConsumeAccountRateLimitResetCreditOutcome;
+use codex_app_server_protocol::RateLimitResetCreditsSummary;
+
+fn reset_attempt(idempotency_key: &str) -> ResetUsageAttempt {
+    ResetUsageAttempt {
+        idempotency_key: idempotency_key.to_string(),
+        available_count: 1,
+        remaining_percent: 10,
+    }
+}
 
 #[tokio::test]
 async fn status_command_renders_immediately_and_refreshes_rate_limits_for_chatgpt_auth() {
@@ -60,6 +70,216 @@ async fn status_command_refresh_updates_cached_limits_for_future_status_outputs(
         refreshed.contains("8% left"),
         "expected a future /status output to use refreshed cached limits, got: {refreshed}"
     );
+}
+
+#[tokio::test]
+async fn status_command_shows_reset_guidance_without_consuming_reset() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 90.0)));
+    chat.on_rate_limit_reset_credits(Some(RateLimitResetCreditsSummary { available_count: 2 }));
+    drain_insert_history(&mut rx);
+
+    chat.dispatch_command(SlashCommand::Status);
+
+    let rendered = match rx.try_recv() {
+        Ok(AppEvent::InsertHistoryCell(cell)) => {
+            lines_to_single_string(&cell.display_lines(/*width*/ 80))
+        }
+        other => panic!("expected status output, got {other:?}"),
+    };
+    assert!(
+        rendered.contains("Resets") && rendered.contains("2 resets available; run /reset-usage"),
+        "expected /status to render reset guidance, got: {rendered}"
+    );
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RefreshRateLimits {
+            origin: RateLimitRefreshOrigin::StatusCommand { .. },
+        })
+    );
+    assert!(
+        !std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::ResetUsageConfirmed { .. })),
+        "/status must never send a reset consume event"
+    );
+}
+
+#[tokio::test]
+async fn reset_usage_blocks_when_more_than_35_percent_remains() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 64.0)));
+    chat.on_rate_limit_reset_credits(Some(RateLimitResetCreditsSummary { available_count: 1 }));
+
+    chat.dispatch_command(SlashCommand::ResetUsage);
+
+    assert_eq!(chat.bottom_pane.active_view_id(), None);
+    let rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("locked until 35% or less is left (36% left)"),
+        "expected /reset-usage to refuse while more than 35% remains, got: {rendered}"
+    );
+    assert!(
+        !std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::ResetUsageConfirmed { .. })),
+        "blocked /reset-usage must not consume a reset"
+    );
+}
+
+#[tokio::test]
+async fn reset_usage_refreshes_and_refuses_when_data_is_missing() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+
+    chat.dispatch_command(SlashCommand::ResetUsage);
+
+    assert_eq!(chat.bottom_pane.active_view_id(), None);
+    assert_matches!(rx.try_recv(), Ok(AppEvent::InsertHistoryCell(_)));
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RefreshRateLimits {
+            origin: RateLimitRefreshOrigin::StartupPrefetch,
+        })
+    );
+}
+
+#[tokio::test]
+async fn reset_usage_opens_confirmation_at_35_percent_or_less_without_consuming() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 65.0)));
+    chat.on_rate_limit_reset_credits(Some(RateLimitResetCreditsSummary { available_count: 1 }));
+
+    chat.dispatch_command(SlashCommand::ResetUsage);
+
+    assert_eq!(
+        chat.bottom_pane.active_view_id(),
+        Some("reset-usage-confirm")
+    );
+    assert!(
+        !std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::ResetUsageConfirmed { .. })),
+        "opening confirmation must not consume a reset"
+    );
+}
+
+#[tokio::test]
+async fn reset_usage_refuses_while_consume_request_is_in_flight() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 90.0)));
+    chat.on_rate_limit_reset_credits(Some(RateLimitResetCreditsSummary { available_count: 1 }));
+
+    assert!(chat.start_reset_usage_request(reset_attempt("attempt-1")));
+    chat.dispatch_command(SlashCommand::ResetUsage);
+
+    assert_eq!(chat.bottom_pane.active_view_id(), None);
+    let rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("already in progress"),
+        "expected /reset-usage to refuse while consume is in flight, got: {rendered}"
+    );
+    assert!(
+        !std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::ResetUsageConfirmed { .. })),
+        "in-flight /reset-usage must not consume another reset"
+    );
+}
+
+#[tokio::test]
+async fn reset_usage_refuses_while_post_consume_refresh_is_pending() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 90.0)));
+    chat.on_rate_limit_reset_credits(Some(RateLimitResetCreditsSummary { available_count: 1 }));
+
+    let attempt = reset_attempt("attempt-1");
+    assert!(chat.start_reset_usage_request(attempt.clone()));
+    chat.finish_reset_usage_request(
+        attempt,
+        Ok(ConsumeAccountRateLimitResetCreditOutcome::Reset),
+    );
+    chat.dispatch_command(SlashCommand::ResetUsage);
+
+    assert_eq!(chat.bottom_pane.active_view_id(), None);
+    let rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("already in progress"),
+        "expected /reset-usage to refuse during post-consume refresh, got: {rendered}"
+    );
+    assert!(
+        !std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::ResetUsageConfirmed { .. })),
+        "pending-refresh /reset-usage must not consume another reset"
+    );
+}
+
+#[tokio::test]
+async fn reset_usage_failed_post_consume_refresh_invalidates_cached_eligibility() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 90.0)));
+    chat.on_rate_limit_reset_credits(Some(RateLimitResetCreditsSummary { available_count: 1 }));
+
+    let attempt = reset_attempt("attempt-1");
+    assert!(chat.start_reset_usage_request(attempt.clone()));
+    chat.finish_reset_usage_request(
+        attempt,
+        Ok(ConsumeAccountRateLimitResetCreditOutcome::Reset),
+    );
+    chat.finish_reset_usage_rate_limit_refresh(/*refresh_succeeded*/ false);
+    drain_insert_history(&mut rx);
+
+    chat.dispatch_command(SlashCommand::ResetUsage);
+
+    assert_eq!(chat.bottom_pane.active_view_id(), None);
+    assert_matches!(rx.try_recv(), Ok(AppEvent::InsertHistoryCell(_)));
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RefreshRateLimits {
+            origin: RateLimitRefreshOrigin::StartupPrefetch,
+        })
+    );
+    assert!(
+        !std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::ResetUsageConfirmed { .. })),
+        "failed-refresh /reset-usage must require fresh data before another consume"
+    );
+}
+
+#[tokio::test]
+async fn reset_usage_revalidates_eligibility_when_confirmation_is_accepted() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 90.0)));
+    chat.on_rate_limit_reset_credits(Some(RateLimitResetCreditsSummary { available_count: 1 }));
+    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 63.0)));
+
+    assert!(!chat.start_reset_usage_request(reset_attempt("attempt-1")));
+
+    let rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("reset is now locked until 35% or less is left (37% left)"),
+        "expected confirmation-time revalidation to block changed eligibility, got: {rendered}"
+    );
+    assert_eq!(chat.reset_usage_request_in_flight, None);
 }
 
 #[tokio::test]

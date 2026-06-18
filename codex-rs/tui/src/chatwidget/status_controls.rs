@@ -220,6 +220,7 @@ impl ChatWidget {
             .values()
             .cloned()
             .collect();
+        let reset_usage = self.status_reset_usage_state_at(Local::now());
         let agents_summary =
             crate::status::compose_agents_summary(&self.config, &self.instruction_source_paths);
         let (cell, handle) = crate::status::new_status_output_with_rate_limits_handle(
@@ -240,6 +241,7 @@ impl ChatWidget {
             reasoning_effort_override,
             agents_summary,
             refreshing_rate_limits,
+            reset_usage,
         );
         if let Some(request_id) = request_id {
             self.refreshing_status_outputs.push((request_id, handle));
@@ -258,12 +260,13 @@ impl ChatWidget {
             .cloned()
             .collect();
         let now = Local::now();
+        let reset_usage = self.status_reset_usage_state_at(now);
         let mut remaining = Vec::with_capacity(self.refreshing_status_outputs.len());
         let mut updated_any = false;
         for (pending_request_id, handle) in self.refreshing_status_outputs.drain(..) {
             if pending_request_id == request_id {
                 updated_any = true;
-                handle.finish_rate_limit_refresh(rate_limit_snapshots.as_slice(), now);
+                handle.finish_rate_limit_refresh(rate_limit_snapshots.as_slice(), reset_usage, now);
             } else {
                 remaining.push((pending_request_id, handle));
             }

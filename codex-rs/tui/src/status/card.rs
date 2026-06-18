@@ -38,12 +38,15 @@ use super::helpers::compose_account_display;
 use super::helpers::compose_model_display;
 use super::helpers::format_directory_display;
 use super::helpers::format_tokens_compact;
+use super::rate_limits::RESET_USAGE_MAX_REMAINING_PERCENT;
 use super::rate_limits::RateLimitSnapshotDisplay;
 use super::rate_limits::StatusRateLimitData;
 use super::rate_limits::StatusRateLimitRow;
 use super::rate_limits::StatusRateLimitValue;
+use super::rate_limits::StatusResetUsageState;
 use super::rate_limits::compose_rate_limit_data;
 use super::rate_limits::compose_rate_limit_data_many;
+use super::rate_limits::format_reset_credit_count;
 use super::rate_limits::format_status_limit_summary;
 use super::rate_limits::render_status_limit_progress_bar;
 use super::remote_connection::RemoteConnectionStatus;
@@ -73,6 +76,7 @@ pub(crate) struct StatusTokenUsageData {
 #[derive(Debug)]
 struct StatusRateLimitState {
     rate_limits: StatusRateLimitData,
+    reset_usage: StatusResetUsageState,
     refreshing_rate_limits: bool,
 }
 
@@ -85,6 +89,7 @@ impl StatusHistoryHandle {
     pub(crate) fn finish_rate_limit_refresh(
         &self,
         rate_limits: &[RateLimitSnapshotDisplay],
+        reset_usage: StatusResetUsageState,
         now: DateTime<Local>,
     ) {
         let rate_limits = if rate_limits.len() <= 1 {
@@ -98,6 +103,7 @@ impl StatusHistoryHandle {
             .write()
             .expect("status history rate-limit state poisoned");
         state.rate_limits = rate_limits;
+        state.reset_usage = reset_usage;
         state.refreshing_rate_limits = false;
     }
 }
@@ -175,6 +181,44 @@ pub(crate) fn new_status_output_with_rate_limits(
     reasoning_effort_override: Option<Option<ReasoningEffort>>,
     refreshing_rate_limits: bool,
 ) -> CompositeHistoryCell {
+    new_status_output_with_rate_limits_and_reset_usage(
+        config,
+        account_display,
+        token_info,
+        total_usage,
+        session_id,
+        thread_name,
+        forked_from,
+        rate_limits,
+        _plan_type,
+        now,
+        model_name,
+        collaboration_mode,
+        reasoning_effort_override,
+        refreshing_rate_limits,
+        StatusResetUsageState::Hidden,
+    )
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn new_status_output_with_rate_limits_and_reset_usage(
+    config: &Config,
+    account_display: Option<&StatusAccountDisplay>,
+    token_info: Option<&TokenUsageInfo>,
+    total_usage: &TokenUsage,
+    session_id: &Option<ThreadId>,
+    thread_name: Option<String>,
+    forked_from: Option<ThreadId>,
+    rate_limits: &[RateLimitSnapshotDisplay],
+    _plan_type: Option<PlanType>,
+    now: DateTime<Local>,
+    model_name: &str,
+    collaboration_mode: Option<&str>,
+    reasoning_effort_override: Option<Option<ReasoningEffort>>,
+    refreshing_rate_limits: bool,
+    reset_usage: StatusResetUsageState,
+) -> CompositeHistoryCell {
     new_status_output_with_rate_limits_handle(
         config,
         /*runtime_model_provider_base_url*/ None,
@@ -193,6 +237,7 @@ pub(crate) fn new_status_output_with_rate_limits(
         reasoning_effort_override,
         "<none>".to_string(),
         refreshing_rate_limits,
+        reset_usage,
     )
     .0
 }
@@ -216,6 +261,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
     reasoning_effort_override: Option<Option<ReasoningEffort>>,
     agents_summary: String,
     refreshing_rate_limits: bool,
+    reset_usage: StatusResetUsageState,
 ) -> (CompositeHistoryCell, StatusHistoryHandle) {
     let command = PlainHistoryCell::new(vec!["/status".magenta().into()]);
     let (card, handle) = StatusHistoryCell::new(
@@ -236,6 +282,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
         reasoning_effort_override,
         agents_summary,
         refreshing_rate_limits,
+        reset_usage,
     );
 
     (
@@ -264,6 +311,7 @@ impl StatusHistoryCell {
         reasoning_effort_override: Option<Option<ReasoningEffort>>,
         agents_summary: String,
         refreshing_rate_limits: bool,
+        reset_usage: StatusResetUsageState,
     ) -> (Self, StatusHistoryHandle) {
         let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
         let permission_profile = config.permissions.effective_permission_profile();
@@ -347,6 +395,7 @@ impl StatusHistoryCell {
         };
         let rate_limit_state = Arc::new(RwLock::new(StatusRateLimitState {
             rate_limits,
+            reset_usage,
             refreshing_rate_limits,
         }));
         let agents_summary = Arc::new(RwLock::new(agents_summary));
@@ -413,16 +462,16 @@ impl StatusHistoryCell {
         available_inner_width: usize,
         formatter: &FieldFormatter,
     ) -> Vec<Line<'static>> {
-        match &state.rate_limits {
+        let mut lines = match &state.rate_limits {
             StatusRateLimitData::Available(rows_data) => {
                 if rows_data.is_empty() {
-                    return vec![formatter.line(
+                    vec![formatter.line(
                         "Limits",
                         vec![Span::from("not available for this account").dim()],
-                    )];
+                    )]
+                } else {
+                    self.rate_limit_row_lines(rows_data, available_inner_width, formatter)
                 }
-
-                self.rate_limit_row_lines(rows_data, available_inner_width, formatter)
             }
             StatusRateLimitData::Stale(rows_data) => {
                 let mut lines =
@@ -455,7 +504,57 @@ impl StatusHistoryCell {
                     .dim()],
                 )]
             }
-        }
+        };
+        lines.extend(self.reset_usage_lines(state, formatter));
+        lines
+    }
+
+    fn reset_usage_lines(
+        &self,
+        state: &StatusRateLimitState,
+        formatter: &FieldFormatter,
+    ) -> Vec<Line<'static>> {
+        let spans = match state.reset_usage {
+            StatusResetUsageState::Hidden => return Vec::new(),
+            StatusResetUsageState::Missing => {
+                vec![Span::from(if state.refreshing_rate_limits {
+                    "refresh requested; run /reset-usage again shortly."
+                } else {
+                    "data not available yet; run /status to refresh."
+                })
+                .dim()]
+            }
+            StatusResetUsageState::Loading => {
+                vec![Span::from("refresh requested; run /reset-usage again shortly.").dim()]
+            }
+            StatusResetUsageState::Unavailable => {
+                vec![Span::from("not available for this account").dim()]
+            }
+            StatusResetUsageState::Stale { available_count } => {
+                vec![Span::from(format!(
+                    "{} available, but usage data is stale; run /status to refresh.",
+                    format_reset_credit_count(available_count)
+                ))
+                .dim()]
+            }
+            StatusResetUsageState::NoCredits => vec![Span::from("none available").dim()],
+            StatusResetUsageState::Locked {
+                available_count,
+                remaining_percent,
+            } => vec![Span::from(format!(
+                "{} available, locked until {RESET_USAGE_MAX_REMAINING_PERCENT}% or less is left ({remaining_percent}% left).",
+                format_reset_credit_count(available_count)
+            ))
+            .dim()],
+            StatusResetUsageState::Eligible {
+                available_count,
+                remaining_percent,
+            } => vec![Span::from(format!(
+                "{} available; run /reset-usage to confirm ({remaining_percent}% left).",
+                format_reset_credit_count(available_count)
+            ))],
+        };
+        vec![formatter.line("Resets", spans)]
     }
 
     fn rate_limit_row_lines(
@@ -572,6 +671,9 @@ impl StatusHistoryCell {
             }
             StatusRateLimitData::Unavailable => push_label(labels, seen, "Limits"),
             StatusRateLimitData::Missing => push_label(labels, seen, "Limits"),
+        }
+        if state.reset_usage.is_visible() {
+            push_label(labels, seen, "Resets");
         }
     }
 }

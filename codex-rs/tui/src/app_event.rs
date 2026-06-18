@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppInfo;
+use codex_app_server_protocol::ConsumeAccountRateLimitResetCreditOutcome;
 use codex_app_server_protocol::GetAccountTokenUsageResponse;
 use codex_app_server_protocol::MarketplaceAddResponse;
 use codex_app_server_protocol::MarketplaceRemoveResponse;
@@ -25,6 +26,7 @@ use codex_app_server_protocol::PluginMarketplaceEntry;
 use codex_app_server_protocol::PluginReadParams;
 use codex_app_server_protocol::PluginReadResponse;
 use codex_app_server_protocol::PluginUninstallResponse;
+use codex_app_server_protocol::RateLimitResetCreditsSummary;
 use codex_app_server_protocol::RateLimitSnapshot;
 use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::ThreadGoalStatus;
@@ -125,6 +127,22 @@ pub(crate) enum RateLimitRefreshOrigin {
     /// User-initiated via `/status`; the `request_id` correlates with the
     /// status card that should be updated when the fetch completes.
     StatusCommand { request_id: u64 },
+    /// Refresh requested after a `/reset-usage` attempt so the local cache and
+    /// status surfaces reflect the backend outcome before showing final copy.
+    ResetUsage,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AccountRateLimitsSnapshot {
+    pub(crate) snapshots: Vec<RateLimitSnapshot>,
+    pub(crate) reset_credits: Option<RateLimitResetCreditsSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResetUsageAttempt {
+    pub(crate) idempotency_key: String,
+    pub(crate) available_count: i64,
+    pub(crate) remaining_percent: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,7 +317,18 @@ pub(crate) enum AppEvent {
     /// Result of refreshing rate limits.
     RateLimitsLoaded {
         origin: RateLimitRefreshOrigin,
-        result: Result<Vec<RateLimitSnapshot>, String>,
+        result: Result<AccountRateLimitsSnapshot, String>,
+    },
+
+    /// User accepted the `/reset-usage` confirmation modal.
+    ResetUsageConfirmed {
+        attempt: ResetUsageAttempt,
+    },
+
+    /// Result of consuming one reset credit.
+    ResetUsageFinished {
+        attempt: ResetUsageAttempt,
+        result: Result<ConsumeAccountRateLimitResetCreditOutcome, String>,
     },
 
     /// Fetch account-wide token activity for a `/usage` history card.

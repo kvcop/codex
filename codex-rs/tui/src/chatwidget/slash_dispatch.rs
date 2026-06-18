@@ -433,6 +433,9 @@ impl ChatWidget {
                     );
                 }
             }
+            SlashCommand::ResetUsage => {
+                self.open_reset_usage_prompt();
+            }
             SlashCommand::Usage => {
                 if self.ensure_token_activity_command_available() {
                     self.add_token_activity_output(tokens::TokenActivityView::Daily);
@@ -1032,6 +1035,7 @@ impl ChatWidget {
         match cmd {
             SlashCommand::Ide
             | SlashCommand::Status
+            | SlashCommand::ResetUsage
             | SlashCommand::Usage
             | SlashCommand::DebugConfig
             | SlashCommand::Ps

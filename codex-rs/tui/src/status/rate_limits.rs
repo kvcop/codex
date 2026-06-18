@@ -23,6 +23,7 @@ use codex_protocol::num_format::format_with_separators;
 const STATUS_LIMIT_BAR_SEGMENTS: usize = 20;
 const STATUS_LIMIT_BAR_FILLED: &str = "█";
 const STATUS_LIMIT_BAR_EMPTY: &str = "░";
+pub(crate) const RESET_USAGE_MAX_REMAINING_PERCENT: i64 = 35;
 
 #[derive(Debug, Clone)]
 pub(crate) struct StatusRateLimitRow {
@@ -59,6 +60,48 @@ pub(crate) enum StatusRateLimitData {
     Unavailable,
     /// No snapshot data is currently available.
     Missing,
+}
+
+/// Availability and safety state for earned rate-limit reset credits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum StatusResetUsageState {
+    /// Do not render reset information for sessions where it is not applicable.
+    #[default]
+    Hidden,
+    /// The account supports rate-limit reads, but no reset data has been fetched yet.
+    Missing,
+    /// The latest refresh is in flight.
+    Loading,
+    /// The account response did not include enough data to decide reset safety.
+    Unavailable,
+    /// Reset credits are available, but the usage snapshot is too old to trust.
+    Stale { available_count: i64 },
+    /// The account has no earned reset credits available.
+    NoCredits,
+    /// Reset credits exist, but enough usage remains that reset is blocked.
+    Locked {
+        available_count: i64,
+        remaining_percent: i64,
+    },
+    /// Reset credits exist and the current usage is low enough to offer confirmation.
+    Eligible {
+        available_count: i64,
+        remaining_percent: i64,
+    },
+}
+
+impl StatusResetUsageState {
+    pub(crate) fn is_visible(self) -> bool {
+        !matches!(self, Self::Hidden)
+    }
+}
+
+pub(crate) fn format_reset_credit_count(count: i64) -> String {
+    if count == 1 {
+        "1 reset".to_string()
+    } else {
+        format!("{count} resets")
+    }
 }
 
 /// Maximum age before a snapshot is considered stale in status output.

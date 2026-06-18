@@ -19,13 +19,19 @@ pub(crate) use card::StatusHistoryHandle;
 pub(crate) use card::new_status_output;
 #[cfg(test)]
 pub(crate) use card::new_status_output_with_rate_limits;
+#[cfg(test)]
+pub(crate) use card::new_status_output_with_rate_limits_and_reset_usage;
 pub(crate) use card::new_status_output_with_rate_limits_handle;
 pub(crate) use helpers::compose_agents_summary;
 pub(crate) use helpers::format_directory_display;
 pub(crate) use helpers::format_tokens_compact;
 pub(crate) use helpers::plan_type_display_name;
+pub(crate) use rate_limits::RATE_LIMIT_STALE_THRESHOLD_MINUTES;
+pub(crate) use rate_limits::RESET_USAGE_MAX_REMAINING_PERCENT;
 pub(crate) use rate_limits::RateLimitSnapshotDisplay;
 pub(crate) use rate_limits::RateLimitWindowDisplay;
+pub(crate) use rate_limits::StatusResetUsageState;
+pub(crate) use rate_limits::format_reset_credit_count;
 #[cfg(test)]
 pub(crate) use rate_limits::rate_limit_snapshot_display;
 pub(crate) use rate_limits::rate_limit_snapshot_display_for_limit;

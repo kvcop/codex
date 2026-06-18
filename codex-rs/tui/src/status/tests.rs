@@ -1,11 +1,13 @@
 use super::new_status_output;
 use super::new_status_output_with_rate_limits;
+use super::new_status_output_with_rate_limits_and_reset_usage;
 use super::new_status_output_with_rate_limits_handle;
 use super::rate_limit_snapshot_display;
 use super::rate_limits::RateLimitSnapshotDisplay;
 use super::rate_limits::RateLimitWindowDisplay;
 use super::rate_limits::SpendControlLimitSnapshotDisplay;
 use super::rate_limits::StatusRateLimitData;
+use super::rate_limits::StatusResetUsageState;
 use super::rate_limits::compose_rate_limit_data_many;
 use crate::history_cell::HistoryCell;
 use crate::legacy_core::config::Config;
@@ -671,6 +673,7 @@ async fn status_model_provider_uses_bedrock_runtime_base_url_and_gates_usage_lin
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
+        StatusResetUsageState::Hidden,
     );
     let rendered = render_lines(&composite.display_lines(/*width*/ 120)).join("\n");
 
@@ -712,6 +715,7 @@ async fn status_model_provider_uses_bedrock_runtime_base_url_and_gates_usage_lin
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
+        StatusResetUsageState::Hidden,
     );
     let rendered = render_lines(&composite.display_lines(/*width*/ 120)).join("\n");
 
@@ -941,6 +945,67 @@ async fn status_snapshot_includes_monthly_limit() {
         &model_slug,
         /*collaboration_mode*/ None,
         /*reasoning_effort_override*/ None,
+    );
+    let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
+    if cfg!(windows) {
+        for line in &mut rendered_lines {
+            *line = line.replace('\\', "/");
+        }
+    }
+    let sanitized = sanitize_directory(rendered_lines).join("\n");
+    assert_snapshot!(sanitized);
+}
+
+#[tokio::test]
+async fn status_snapshot_with_reset_usage_guidance() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex".to_string());
+    config.model_provider_id = "openai".to_string();
+    set_workspace_cwd(&mut config, test_path_buf("/workspace/tests").abs());
+
+    let usage = TokenUsage::default();
+    let captured_at = chrono::Local
+        .with_ymd_and_hms(2024, 1, 2, 3, 4, 5)
+        .single()
+        .expect("timestamp");
+    let snapshot = RateLimitSnapshot {
+        limit_id: None,
+        limit_name: None,
+        primary: Some(RateLimitWindow {
+            used_percent: 90,
+            window_duration_mins: Some(300),
+            resets_at: Some(reset_at_from(&captured_at, /*seconds*/ 600)),
+        }),
+        secondary: None,
+        credits: None,
+        individual_limit: None,
+        plan_type: None,
+        rate_limit_reached_type: None,
+    };
+    let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+    let model_slug = get_model_offline_for_tests(config.model.as_deref());
+    let token_info = token_info_for(&model_slug, &config, &usage);
+
+    let composite = new_status_output_with_rate_limits_and_reset_usage(
+        &config,
+        /*account_display*/ None,
+        Some(&token_info),
+        &usage,
+        &None,
+        /*thread_name*/ None,
+        /*forked_from*/ None,
+        std::slice::from_ref(&rate_display),
+        None,
+        captured_at,
+        &model_slug,
+        /*collaboration_mode*/ None,
+        /*reasoning_effort_override*/ None,
+        /*refreshing_rate_limits*/ false,
+        StatusResetUsageState::Eligible {
+            available_count: 2,
+            remaining_percent: 10,
+        },
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
@@ -1502,6 +1567,7 @@ async fn status_snapshot_uses_default_reasoning_when_config_empty() {
         /*reasoning_effort_override*/ Some(Some(ReasoningEffort::Medium)),
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
+        StatusResetUsageState::Hidden,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
     if cfg!(windows) {
