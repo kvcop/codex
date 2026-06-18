@@ -32,6 +32,49 @@ conflict with future upstream merges or need manual retesting after an update.
   - fenced markdown tables while streaming;
   - very wide prose/path-heavy tables that should switch to records.
 
+## Planned Desktop Rate Limit Resets
+
+- Status: parked for the current `rust-v0.141.0` branch after the release merge
+  is stable. Do not implement from this note directly; run `grill-me` and/or a
+  focused plan first if the surface is still ambiguous.
+- Source snapshot inspected statically: official Desktop DMG
+  `Codex-26.611.62324-arm64`, `app.asar` built on 2026-06-17, DMG SHA-256
+  `31d8e2666a0895a830df0832dc4083ae82a6e9bd26603141c0293acea6618211`.
+- Official Desktop wording to preserve in any local UI/docs:
+  - banner CTA: `Reset usage`;
+  - modal CTA: `Reset rate limit`;
+  - summary/menu row: `{# reset available}` / `{# resets available}`;
+  - success toast: `Usage reset. You have {# left}`;
+  - errors: `This reset was already used`, `No resets are available`,
+    `Your usage does not need a reset right now`,
+    `Couldn’t reset usage. Please try again`.
+- Official Desktop backend shape observed in the webview bundle:
+  - `GET /wham/rate-limit-reset-credits`;
+  - `POST /wham/rate-limit-reset-credits/consume`;
+  - request body: `{ "credit_id": <selected credit id>, "redeem_request_id": <uuid> }`.
+- Planned app-server parity check: keep `idempotencyKey` mapped to
+  `redeem_request_id`, but add an optional `creditId`/`credit_id` path before
+  landing the feature if the backend still expects selected reset-card ids.
+- Planned TUI placement: expose the reset affordance from `/status`, behind a
+  confirmation modal. The modal must default to `Cancel` and must ignore
+  confirm/cancel/navigation control keys for the first 500 ms after opening, so
+  duplicated terminal `Enter`/`Esc`/`Tab`/`Backspace` events cannot accidentally
+  consume a saved reset.
+- Safety rule: development and automated tests must use mock app-server/backend
+  fixtures only. Never run a test or manual smoke path that posts to a real
+  ChatGPT/OpenAI backend with live auth. Any live redemption must be a separate,
+  explicit manual action from Vladimir, because it can consume a real saved
+  reset.
+
+## Planned Usage Daily Week Ordering
+
+- Status: planned after Desktop rate limit resets unless promoted earlier.
+- Local fork expectation: the `usage daily` weekly chart/list should render
+  Monday as the first row and Sunday as the last row.
+- Implementation note: verify the upstream data semantics before changing the
+  view, then normalize display order locally without changing stored usage
+  values.
+
 ## TUI Pets In Tmux
 
 - Local experiment: `CODEX_UNSAFE_TUI_PETS_PROTOCOL=kitty`.
