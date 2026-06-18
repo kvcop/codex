@@ -1,4 +1,5 @@
 use super::*;
+use codex_backend_client::ConsumeRateLimitResetCreditArgs;
 
 const RATE_LIMIT_RESET_REQUEST_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 10);
 #[cfg(debug_assertions)]
@@ -24,7 +25,10 @@ impl AccountRequestProcessor {
             .unwrap_or(request_timeout);
         let response = tokio::time::timeout(
             request_timeout,
-            client.consume_rate_limit_reset_credit(&params.idempotency_key),
+            client.consume_rate_limit_reset_credit(ConsumeRateLimitResetCreditArgs {
+                redeem_request_id: &params.idempotency_key,
+                credit_id: params.credit_id.as_deref(),
+            }),
         )
         .await
         .map_err(|_| internal_error("rate limit reset consume timed out"))?

@@ -10,9 +10,16 @@ use reqwest::header::CONTENT_TYPE;
 use reqwest::header::HeaderValue;
 use serde::Serialize;
 
+pub struct ConsumeRateLimitResetCreditArgs<'a> {
+    pub redeem_request_id: &'a str,
+    pub credit_id: Option<&'a str>,
+}
+
 #[derive(Serialize)]
 struct ConsumeRateLimitResetCreditRequest<'a> {
     redeem_request_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    credit_id: Option<&'a str>,
 }
 
 impl Client {
@@ -33,7 +40,7 @@ impl Client {
 
     pub async fn consume_rate_limit_reset_credit(
         &self,
-        redeem_request_id: &str,
+        args: ConsumeRateLimitResetCreditArgs<'_>,
     ) -> Result<ConsumeRateLimitResetCreditResponse> {
         let url = self.consume_rate_limit_reset_credit_url();
         let req = self
@@ -41,7 +48,10 @@ impl Client {
             .post(&url)
             .headers(self.headers())
             .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-            .json(&ConsumeRateLimitResetCreditRequest { redeem_request_id });
+            .json(&ConsumeRateLimitResetCreditRequest {
+                redeem_request_id: args.redeem_request_id,
+                credit_id: args.credit_id,
+            });
         let (body, ct) = self.exec_request(req, "POST", &url).await?;
         self.decode_json(&url, &ct, &body)
     }

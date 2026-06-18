@@ -556,6 +556,13 @@
     },
     "ConsumeAccountRateLimitResetCreditParams": {
       "properties": {
+        "creditId": {
+          "description": "Optional reset credit selected by the client when multiple reset credits are available.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "idempotencyKey": {
           "description": "Identifies one logical reset attempt. A UUID is recommended; reuse the same value when retrying that attempt.",
           "type": "string"

@@ -7,4 +7,8 @@ export type ConsumeAccountRateLimitResetCreditParams = {
  * Identifies one logical reset attempt. A UUID is recommended; reuse the same value when
  * retrying that attempt.
  */
-idempotencyKey: string, };
+idempotencyKey: string,
+/**
+ * Optional reset credit selected by the client when multiple reset credits are available.
+ */
+creditId?: string | null, };

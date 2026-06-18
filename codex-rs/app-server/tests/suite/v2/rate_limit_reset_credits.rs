@@ -44,6 +44,7 @@ async fn consume_rate_limit_reset_credit_requires_chatgpt_auth() -> Result<()> {
         .send_consume_account_rate_limit_reset_credit_request(
             ConsumeAccountRateLimitResetCreditParams {
                 idempotency_key: "request-1".to_string(),
+                credit_id: None,
             },
         )
         .await?;
@@ -107,6 +108,20 @@ async fn consume_account_rate_limit_reset_credit_maps_backend_outcomes() -> Resu
             .mount(&server)
             .await;
     }
+    Mock::given(method("POST"))
+        .and(path("/api/codex/rate-limit-reset-credits/consume"))
+        .and(header("authorization", "Bearer chatgpt-token"))
+        .and(header("chatgpt-account-id", "account-123"))
+        .and(body_json(json!({
+            "redeem_request_id": "request-with-credit",
+            "credit_id": "credit-123"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": "reset",
+            "windows_reset": 1
+        })))
+        .mount(&server)
+        .await;
 
     let mut mcp = initialized_app_server(codex_home.path()).await?;
     for (idempotency_key, _, expected_outcome, _) in cases {
@@ -117,6 +132,12 @@ async fn consume_account_rate_limit_reset_credit_maps_backend_outcomes() -> Resu
             }
         );
     }
+    assert_eq!(
+        consume_reset_credit_with_credit_id(&mut mcp, "request-with-credit", "credit-123").await?,
+        ConsumeAccountRateLimitResetCreditResponse {
+            outcome: ConsumeAccountRateLimitResetCreditOutcome::Reset,
+        }
+    );
     Ok(())
 }
 
@@ -129,6 +150,7 @@ async fn consume_account_rate_limit_reset_credit_rejects_empty_idempotency_key()
         .send_consume_account_rate_limit_reset_credit_request(
             ConsumeAccountRateLimitResetCreditParams {
                 idempotency_key: String::new(),
+                credit_id: None,
             },
         )
         .await?;
@@ -242,9 +264,28 @@ async fn consume_reset_credit(
 }
 
 async fn send_consume_reset_credit(mcp: &mut TestAppServer, idempotency_key: &str) -> Result<i64> {
+    send_consume_reset_credit_with_credit_id(mcp, idempotency_key, None).await
+}
+
+async fn consume_reset_credit_with_credit_id(
+    mcp: &mut TestAppServer,
+    idempotency_key: &str,
+    credit_id: &str,
+) -> Result<ConsumeAccountRateLimitResetCreditResponse> {
+    let request_id =
+        send_consume_reset_credit_with_credit_id(mcp, idempotency_key, Some(credit_id)).await?;
+    read_response(mcp, request_id).await
+}
+
+async fn send_consume_reset_credit_with_credit_id(
+    mcp: &mut TestAppServer,
+    idempotency_key: &str,
+    credit_id: Option<&str>,
+) -> Result<i64> {
     mcp.send_consume_account_rate_limit_reset_credit_request(
         ConsumeAccountRateLimitResetCreditParams {
             idempotency_key: idempotency_key.to_string(),
+            credit_id: credit_id.map(str::to_string),
         },
     )
     .await

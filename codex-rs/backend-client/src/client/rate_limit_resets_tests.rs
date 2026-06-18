@@ -28,9 +28,21 @@ fn rate_limit_reset_contract_uses_expected_paths_and_payloads() {
     assert_eq!(
         serde_json::to_value(ConsumeRateLimitResetCreditRequest {
             redeem_request_id: "redeem-123",
+            credit_id: None,
         })
         .unwrap(),
         serde_json::json!({ "redeem_request_id": "redeem-123" })
+    );
+    assert_eq!(
+        serde_json::to_value(ConsumeRateLimitResetCreditRequest {
+            redeem_request_id: "redeem-123",
+            credit_id: Some("credit-456"),
+        })
+        .unwrap(),
+        serde_json::json!({
+            "redeem_request_id": "redeem-123",
+            "credit_id": "credit-456"
+        })
     );
 
     let status: RateLimitStatusWithResetCredits = serde_json::from_value(serde_json::json!({

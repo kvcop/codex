@@ -30,6 +30,8 @@ use std::fmt;
 
 mod rate_limit_resets;
 
+pub use rate_limit_resets::ConsumeRateLimitResetCreditArgs;
+
 #[derive(Debug)]
 pub enum RequestError {
     UnexpectedStatus {

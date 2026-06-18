@@ -273,6 +273,9 @@ pub struct ConsumeAccountRateLimitResetCreditParams {
     /// Identifies one logical reset attempt. A UUID is recommended; reuse the same value when
     /// retrying that attempt.
     pub idempotency_key: String,
+    /// Optional reset credit selected by the client when multiple reset credits are available.
+    #[ts(optional = nullable)]
+    pub credit_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
