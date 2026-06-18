@@ -20,6 +20,11 @@ Does movement remain acceptable across the terminal setups Вова actually use
 - SSH/mobile client fallback where images may not render.
 - Resize, scroll, tmux pane switch, Kitty tab switch.
 - Sixel path remains unchanged where supported.
+- 2026-06-18: Вова accepted the current Kitty/tmux horizontal `lane-patrol`
+  behavior as a test baseline before Grill 02. Observed behavior: while text
+  does not enter the right-side lane, the pet patrols; when rendered text enters
+  the lane, the pet returns home in its idle pose. That return is still a
+  teleport and remains debug-only.
 
 ## Candidate Checks
 

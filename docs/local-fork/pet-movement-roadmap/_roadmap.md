@@ -10,10 +10,10 @@ source_context: ./REFERENCE.md
 **Roadmap status:** active
 **Current wave:** Wave 1
 **Program max depth:** 2
-**Next action:** run_validation:06-terminal-compat-validation
-**Why:** Plan 01 movement primitives are implemented on the 0.139 fork. The
-current debug patrol is still default-off and needs manual Kitty/tmux evidence
-before behavior-heavy idle/composer work is grilled.
+**Next action:** propose_grill:02-idle-screensaver-grill
+**Why:** Plan 01 movement primitives are implemented and the current horizontal
+debug patrol is acceptable as a test baseline in Kitty/tmux. Behavior-heavy
+idle/composer movement still needs `grill-me` before it becomes executable.
 **Do not:** implement `requires_grill`, `future-note`, or `refactor-gate` items
 directly. For `validation-note`, run only concrete checks when `Next action` is
 `run_validation:<note_id>`; otherwise promote first.
@@ -68,7 +68,7 @@ behavior plans and terminal compatibility evidence.
 
 | Plan | Status | Depends On | Commit / Branch | Done Means |
 |---|---|---|---|---|
-| [01-movement-substrate](01-movement-substrate.md) | implemented | none | `fix/md-tables-rust-v0.139.0-new` | Movement primitives and debug-manual path exist; awaiting refreshed horizontal patrol validation |
+| [01-movement-substrate](01-movement-substrate.md) | implemented | none | `fix/md-tables-rust-v0.141.0-new` | Movement primitives and debug-manual path exist; horizontal patrol accepted as a test baseline |
 | [02-idle-screensaver-grill](02-idle-screensaver-grill.md) | requires_grill | 01 | - | Grill decisions exist and Plan 02 can be created |
 | [06-terminal-compat-validation](06-terminal-compat-validation.md) | validation-note | 01 | - | Compatibility notes are updated after movement debug evidence |
 
@@ -133,6 +133,15 @@ Plan 01: movement substrate
 - 2026-06-16: The fork was updated through `rust-v0.140.0`; the only manual
   merge conflict was the workspace version in `codex-rs/Cargo.toml`, and the
   local markdown/pet/plan-nudge fork behavior remained in place.
+- 2026-06-18: The fork was updated through `rust-v0.141.0`; manual conflicts
+  were the workspace version in `codex-rs/Cargo.toml` and the TUI draw path in
+  `codex-rs/tui/src/app.rs`. Upstream now uses the resize-reflow draw path
+  without the old feature gate, and the local merge kept ambient pet drawing
+  inside that synchronized resize-reflow update.
+- 2026-06-18: Manual movement evidence from Вова accepted the current
+  horizontal `lane-patrol` as a test baseline: it patrols while the lane is
+  empty and returns home when rendered text enters the lane. The home return is
+  still a teleport and should be treated as debug-only behavior before Grill 02.
 
 ## Resume Instructions
 

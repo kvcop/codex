@@ -5,7 +5,7 @@ on. The roadmap remains the control surface; this file is the evidence appendix.
 
 ## Current Source Facts
 
-- Current branch: `fix/md-tables-rust-v0.137.0-new`.
+- Current branch: `fix/md-tables-rust-v0.141.0-new`.
 - Existing local fork notes live in `FORK_NOTES.md`.
 - The flicker mitigation plan lives in
   `docs/local-fork/pet-rendering-flicker-plan.md`.
@@ -28,7 +28,8 @@ on. The roadmap remains the control surface; this file is the evidence appendix.
   returns no delay when terminal image protocol is unavailable or animations
   are disabled.
 - Current rendering emits ambient pet image payload inside the same terminal
-  synchronized update as the chat frame.
+  synchronized update as the chat frame. Since `rust-v0.141.0`, this composes
+  with upstream's always-on resize-reflow draw path.
 - Current renderer forces one pet redraw after finalized history/tool-call rows
   are flushed into scrollback.
 - Phase 3 cached Kitty placement (`a=p`) is intentionally deferred because it
@@ -71,6 +72,10 @@ on. The roadmap remains the control surface; this file is the evidence appendix.
   must be rejected rather than treated as blank.
 - The `FORK_NOTES.md` residual-flicker revisit note is handled by Plan 01 manual
   validation plus Validation 06 before behavior-heavy work is promoted.
+- The current horizontal `lane-patrol` is accepted as a debug/test baseline: it
+  may patrol while its right-side lane is empty and return home when rendered
+  text enters the lane. The return can still be a teleport until behavior work
+  is specified through `grill-me`.
 
 ## Review Artifacts
 

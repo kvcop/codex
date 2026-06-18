@@ -883,16 +883,6 @@ impl Tui {
         .map(|_| ())
     }
 
-    pub fn draw_with_ambient_pet_image(
-        &mut self,
-        height: u16,
-        draw_fn: impl FnOnce(&mut custom_terminal::Frame) -> Option<crate::pets::AmbientPetDraw>,
-    ) -> Result<AmbientPetImageRenderResult> {
-        self.draw_with_optional_ambient_pet_image(height, DrawMode::Standard, |frame| {
-            Some(draw_fn(frame))
-        })
-    }
-
     fn draw_with_optional_ambient_pet_image(
         &mut self,
         height: u16,

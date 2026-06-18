@@ -12,6 +12,7 @@ use crate::app_event::FeedbackCategory;
 use crate::app_event::HistoryLookupResponse;
 use crate::app_event::PermissionProfileSelection;
 use crate::app_event::PluginLocation;
+use crate::app_event::PluginRemoteSectionError;
 use crate::app_event::RateLimitRefreshOrigin;
 #[cfg(target_os = "windows")]
 use crate::app_event::WindowsSandboxEnableMode;
@@ -104,8 +105,10 @@ use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::MergeStrategy;
 use codex_app_server_protocol::PluginInstallParams;
 use codex_app_server_protocol::PluginInstallResponse;
+use codex_app_server_protocol::PluginListMarketplaceKind;
 use codex_app_server_protocol::PluginListParams;
 use codex_app_server_protocol::PluginListResponse;
+use codex_app_server_protocol::PluginMarketplaceEntry;
 use codex_app_server_protocol::PluginReadParams;
 use codex_app_server_protocol::PluginReadResponse;
 use codex_app_server_protocol::PluginUninstallParams;
@@ -1248,16 +1251,8 @@ See the Codex keymap documentation for supported actions and examples."
         app_server: &mut AppServerSession,
         event: TuiEvent,
     ) -> Result<AppRunControl> {
-        let terminal_resize_reflow_enabled = self.terminal_resize_reflow_enabled();
-        if self.should_handle_draw_pre_render()
-            && matches!(event, TuiEvent::Draw | TuiEvent::Resize)
-        {
+        if matches!(event, TuiEvent::Draw | TuiEvent::Resize) {
             self.handle_draw_pre_render(tui)?;
-        } else if matches!(event, TuiEvent::Draw | TuiEvent::Resize) {
-            let size = tui.terminal.size()?;
-            if size != tui.terminal.last_known_screen_size {
-                self.refresh_status_line();
-            }
         }
 
         if self.overlay.is_some() {
@@ -1290,11 +1285,8 @@ See the Codex keymap documentation for supported actions and examples."
                     // Allow widgets to process any pending timers before rendering.
                     self.chat_widget.pre_draw_tick();
                     let draw_ambient_pet_image = self.chat_widget.ambient_pet_image_enabled();
-                    let (_rendered_area, ambient_pet_result) = self.render_chat_widget_frame(
-                        tui,
-                        terminal_resize_reflow_enabled,
-                        draw_ambient_pet_image,
-                    )?;
+                    let (_rendered_area, ambient_pet_result) =
+                        self.render_chat_widget_frame(tui, draw_ambient_pet_image)?;
                     if let Err(err) = ambient_pet_result {
                         self.handle_ambient_pet_image_render_error(tui, err)?;
                     }
@@ -1321,23 +1313,15 @@ See the Codex keymap documentation for supported actions and examples."
     pub(super) fn show_shutdown_feedback(&mut self, tui: &mut tui::Tui) -> Result<()> {
         self.disable_ambient_pet_before_shutdown(tui)?;
         self.chat_widget.show_shutdown_in_progress();
-        let terminal_resize_reflow_enabled = self.terminal_resize_reflow_enabled();
-        if self.should_handle_draw_pre_render() {
-            self.handle_draw_pre_render(tui)?;
-        }
+        self.handle_draw_pre_render(tui)?;
         self.chat_widget.pre_draw_tick();
-        let _ = self.render_chat_widget_frame(
-            tui,
-            terminal_resize_reflow_enabled,
-            /*draw_ambient_pet_image*/ false,
-        )?;
+        let _ = self.render_chat_widget_frame(tui, /*draw_ambient_pet_image*/ false)?;
         Ok(())
     }
 
     fn render_chat_widget_frame(
         &mut self,
         tui: &mut tui::Tui,
-        terminal_resize_reflow_enabled: bool,
         draw_ambient_pet_image: bool,
     ) -> Result<(
         Rect,
@@ -1356,31 +1340,19 @@ See the Codex keymap documentation for supported actions and examples."
             .ambient_pet_movement_bounds(ambient_pet_area);
         let mut rendered_area = Rect::default();
         if !draw_ambient_pet_image {
-            if terminal_resize_reflow_enabled {
-                tui.draw_with_resize_reflow(desired_height, |frame| {
-                    let area = frame.area();
-                    rendered_area = area;
-                    self.chat_widget.render(area, frame.buffer);
-                    if let Some((x, y)) = self.chat_widget.cursor_pos(area) {
-                        frame.set_cursor_style(self.chat_widget.cursor_style(area));
-                        frame.set_cursor_position((x, y));
-                    }
-                })?;
-            } else {
-                tui.draw(desired_height, |frame| {
-                    let area = frame.area();
-                    rendered_area = area;
-                    self.chat_widget.render(area, frame.buffer);
-                    if let Some((x, y)) = self.chat_widget.cursor_pos(area) {
-                        frame.set_cursor_style(self.chat_widget.cursor_style(area));
-                        frame.set_cursor_position((x, y));
-                    }
-                })?;
-            }
+            tui.draw_with_resize_reflow(desired_height, |frame| {
+                let area = frame.area();
+                rendered_area = area;
+                self.chat_widget.render(area, frame.buffer);
+                if let Some((x, y)) = self.chat_widget.cursor_pos(area) {
+                    frame.set_cursor_style(self.chat_widget.cursor_style(area));
+                    frame.set_cursor_position((x, y));
+                }
+            })?;
             return Ok((rendered_area, Ok(())));
         }
 
-        let ambient_pet_result = if terminal_resize_reflow_enabled {
+        let ambient_pet_result =
             tui.draw_with_resize_reflow_and_ambient_pet_image(desired_height, |frame| {
                 let area = frame.area();
                 rendered_area = area;
@@ -1397,26 +1369,7 @@ See the Codex keymap documentation for supported actions and examples."
                         ambient_pet_movement_bounds,
                     ),
                 )
-            })?
-        } else {
-            tui.draw_with_ambient_pet_image(desired_height, |frame| {
-                let area = frame.area();
-                rendered_area = area;
-                self.chat_widget.render(area, frame.buffer);
-                if let Some((x, y)) = self.chat_widget.cursor_pos(area) {
-                    frame.set_cursor_style(self.chat_widget.cursor_style(area));
-                    frame.set_cursor_position((x, y));
-                }
-                self.chat_widget.ambient_pet_draw_with_context(
-                    ambient_pet_area,
-                    area.bottom(),
-                    crate::pets::AmbientPetDrawContext::from_buffer_with_movement_bounds(
-                        frame.buffer,
-                        ambient_pet_movement_bounds,
-                    ),
-                )
-            })?
-        };
+            })?;
         Ok((rendered_area, ambient_pet_result))
     }
 }

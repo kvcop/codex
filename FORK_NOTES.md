@@ -6,9 +6,9 @@ conflict with future upstream merges or need manual retesting after an update.
 
 ## Markdown Tables
 
-- Branch lineage: `fix/md-tables-rust-v0.140.0-new`, merged from
-  `fix/md-tables-rust-v0.139.0-new`.
-- Upstream `rust-v0.140.0` still includes the primary key/value record fallback
+- Branch lineage: `fix/md-tables-rust-v0.141.0-new`, merged from
+  `fix/md-tables-rust-v0.140.0-new`.
+- Upstream `rust-v0.141.0` still includes the primary key/value record fallback
   for cramped markdown tables and preserves OSC 8 hyperlink metadata through
   that renderer. Keep the upstream renderer as the base unless a regression is
   proven locally.
@@ -23,7 +23,7 @@ conflict with future upstream merges or need manual retesting after an update.
   delimiter confirms a table, then renders the live table instead of showing raw
   markdown line-by-line.
 - Upstream `rust-v0.136.0` added official table streaming/rendering changes,
-  and `rust-v0.140.0` still does not replace the local readability guards, so
+  and `rust-v0.141.0` still does not replace the local readability guards, so
   local streaming tests should be kept mainly as regression coverage for the
   raw-markdown flicker cases seen with larger models.
 - Retest after each upstream merge:
@@ -125,6 +125,10 @@ conflict with future upstream merges or need manual retesting after an update.
 - The ambient pet draw is emitted inside the same terminal synchronized update
   as the main chat frame so large transcript redraws do not expose an
   intermediate text-only frame before the pet image payload arrives.
+- Upstream `rust-v0.141.0` moved the TUI onto the resize-reflow draw path
+  without the old feature gate. The local merge keeps ambient pet drawing
+  inside that same resize-reflow synchronized update through
+  `draw_with_resize_reflow_and_ambient_pet_image`.
 - When finalized history/tool-call rows are flushed into terminal scrollback,
   the ambient pet renderer forces one immediate redraw even if the pet frame and
   position did not change. This keeps the Phase 1 dedupe for ordinary frames but
@@ -138,6 +142,10 @@ conflict with future upstream merges or need manual retesting after an update.
   disappear briefly during horizontal divider redraws or bursts of tool-call
   history. This is acceptable for now; revisit if it becomes frequent or before
   implementing real pet movement across transcript/composer rows.
+- Current manual movement evidence: horizontal `lane-patrol` is acceptable as a
+  test baseline. The pet patrols while its right-side lane is empty and returns
+  home when rendered text enters that lane; the return is still a teleport, not
+  final behavior.
 - Retest after changes:
   - pet appears in a Kitty terminal inside tmux;
   - with `CODEX_UNSAFE_TUI_PET_MOVEMENT=lane-patrol`, pet visibly patrols only
