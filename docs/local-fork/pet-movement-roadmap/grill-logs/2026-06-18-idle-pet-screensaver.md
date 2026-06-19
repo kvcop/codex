@@ -3,7 +3,7 @@
 **Created:** 2026-06-18 12:31
 **Mode:** tracked-durable
 **Repo/workdir:** /home/user/code/mine/rust/codex
-**Status:** active
+**Status:** closed
 **Promotion target:** docs/local-fork/pet-movement-roadmap/REFERENCE.md
 **Collision suffix:** none
 
@@ -20,6 +20,7 @@
 | User answer, 2026-06-18 | This is for a personal fork, so playful idle movement can default on as long as there is a flag/settings switch to disable it. |
 | User answer, 2026-06-18 | The disable control should exist in both config and `/pets` UI. |
 | User answer, 2026-06-18 | Accepted the recommended idle timing model: sparse normal cadence, accelerated debug cadence, and reset-on-user-activity or lane collision. |
+| User answer, 2026-06-19 | Accepted keeping Plan 02 narrow: sparse lane-patrol only; advanced screensaver stays separate. |
 
 ## Question Log
 ### Q1 - Idle Movement Rollout Mode
@@ -64,6 +65,19 @@ lane sends the pet home and resets the idle timer.
 **Decision:** accepted
 **Class if unresolved:** none
 
+### Q4 - Plan 02 Scope
+**Why this matters:** A narrow lane-patrol plan can be implemented and tested
+with the existing movement substrate. A more advanced transcript screensaver
+needs separate rules for safe blank rectangles, scrollback versus viewport,
+tool-call rows, and behavior near text.
+**Recommended answer:** Keep Plan 02 narrow: sparse lane-patrol, config plus
+`/pets` toggle, normal/debug timing, and reset-on-activity. Record the advanced
+screensaver as a later `requires_grill`/future plan rather than mixing it into
+Plan 02.
+**User answer:** OK.
+**Decision:** accepted
+**Class if unresolved:** none
+
 ## Accepted Decisions
 1. **Decision:** Idle screensaver movement defaults on in this personal fork,
    but must have an explicit disable switch.
@@ -95,11 +109,21 @@ lane sends the pet home and resets the idle timer.
    **Rationale:** Movement must yield immediately to reading and interaction,
    and should not keep trying to occupy a lane once text enters it.
    **Evidence:** User answer on 2026-06-18.
+7. **Decision:** Plan 02 should stay narrow and implement sparse lane-patrol
+   only.
+   **Rationale:** This keeps the next implementation bounded to already-proven
+   movement primitives and avoids mixing in transcript screensaver safety rules.
+   **Evidence:** User answer on 2026-06-19.
+8. **Decision:** Advanced transcript screensaver behavior remains separate from
+   Plan 02.
+   **Rationale:** Finding empty transcript-side areas and playing near text
+   needs its own safety rules and likely another grill/plan.
+   **Evidence:** User answer on 2026-06-19.
 
 ## Open Items
 | Item | Class | Why It Matters | Proposed Next Step |
 |---|---|---|---|
-| Advanced screensaver scope | future-note | Default-on applies if promoted, but advanced behavior may need more safety rules than lane patrol. | Keep out of Plan 02 unless explicitly promoted. |
+| Advanced screensaver scope | future-note | Default-on applies if promoted, but advanced behavior may need more safety rules than lane patrol. | Promote through a separate grill/plan after sparse lane-patrol is validated. |
 
 ## Promotion Signals
 - Existing roadmap already classifies idle screensaver behavior as current-wave
@@ -110,4 +134,10 @@ lane sends the pet home and resets the idle timer.
   and record decisions.
 
 ## Closing Summary
-- pending
+- Grill 02 is closed. Accepted Plan 02 scope: default-on sparse idle
+  lane-patrol for this personal fork, with a config key and `/pets` UI toggle to
+  disable it, normal and debug timing modes, user-activity/lane-collision reset,
+  and no advanced transcript screensaver behavior in the first implementation.
+- Recommended next action when development resumes: use `plan-creation` to
+  create Plan 02 from these decisions. Do not start implementation immediately
+  from this grill session.

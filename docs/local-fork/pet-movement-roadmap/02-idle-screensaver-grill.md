@@ -1,18 +1,23 @@
 ---
 parent_roadmap: ./_roadmap.md
 plan_id: 02-idle-screensaver-grill
-status: requires_grill
+status: grilled
 planning_maturity: current-wave
 depends_on: [01-movement-substrate]
 unblocks: [03-composer-curiosity-grill]
+decision_log: ./grill-logs/2026-06-18-idle-pet-screensaver.md
 ---
 
 # Grill 02: Idle Screensaver Behavior
 
-## Unresolved Decision
+## Resolved Decision
 
-The roadmap needs product rules for when the pet may leave home during idle
-time and what counts as a safe blank space.
+The roadmap needed product rules for when the pet may leave home during idle
+time and what counts as acceptable idle behavior.
+
+The accepted Plan 02 scope is narrow sparse lane-patrol only. Advanced
+transcript-side screensaver behavior remains deferred to a separate future
+grill/plan.
 
 ## Why Code Cannot Answer This
 
@@ -42,5 +47,5 @@ and does not distract from reading.
 
 ## Promotion Trigger
 
-Promote through `grill-me` when Plan 01 is accepted and movement primitives are
-available.
+Promote through `plan-creation` when Vladimir resumes implementation. Do not
+start implementation directly from this grill note.

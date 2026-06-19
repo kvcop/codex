@@ -10,10 +10,11 @@ source_context: ./REFERENCE.md
 **Roadmap status:** active
 **Current wave:** Wave 1
 **Program max depth:** 2
-**Next action:** propose_grill:02-idle-screensaver-grill
-**Why:** Plan 01 movement primitives are implemented and the current horizontal
-debug patrol is acceptable as a test baseline in Kitty/tmux. Behavior-heavy
-idle/composer movement still needs `grill-me` before it becomes executable.
+**Next action:** plan_creation:02-idle-screensaver-lane-patrol
+**Why:** Grill 02 is closed and captured in
+`grill-logs/2026-06-18-idle-pet-screensaver.md`. The next executable slice is
+the narrow sparse lane-patrol behavior; do not start implementation until
+Vladimir explicitly resumes this work.
 **Do not:** implement `requires_grill`, `future-note`, or `refactor-gate` items
 directly. For `validation-note`, run only concrete checks when `Next action` is
 `run_validation:<note_id>`; otherwise promote first.
@@ -44,7 +45,8 @@ This is broader than one implementation plan:
 | Pet can move between home and a bounded target without touching behavior UX | MVP | must before behavior work | Plan 01 | Movement state, anchors, tick scheduling, and tests exist | Debug targets stay inside the right-side pet lane or explicitly owned empty cells |
 | Movement does not worsen known tmux/Kitty flicker beyond accepted residual | MVP | must before manual acceptance | Plan 01 | Debug build accepted in Kitty/tmux | Keep Phase 3 disabled |
 | First-wave movement does not regress Sixel | MVP | must before manual acceptance | Plan 01 | Sixel keeps current home-only behavior unless separately validated | Kitty-first debug movement |
-| Idle pet can visit blank transcript-side space | production | requires product decision | Grill 02 then Plan 02 | Rules for idle time, safe rectangles, and exit conditions are accepted | Requires `grill-me` |
+| Idle pet can run a sparse lane-patrol while Codex is idle | production | ready for plan | Plan 02 | Default-on behavior, disable controls, timings, and reset conditions are accepted | Grill 02 closed |
+| Pet can visit blank transcript-side space | production | requires product decision | Future grill then plan | Rules for safe transcript-side rectangles and behavior near text are accepted | Deferred beyond Plan 02 |
 | Pet can visit composer text while user types | production | requires product decision | Grill 03 then Plan 03 | Rules for multiline growth, submit escape, and typing interference are accepted | Requires `grill-me` |
 | Letter pickup/restore animation | hardening/scale | future-note | Future 04 | Separate text restoration contract exists | Not executable now |
 | Cached Kitty placement lifecycle | hardening/scale | refactor-gate | Gate 05 | Evidence shows retransmit path is insufficient and tmux lifecycle strategy exists | Prior Phase 3 failed |
@@ -55,7 +57,7 @@ This is broader than one implementation plan:
 | Item | Status | Horizon | Depends On | Promotion / Close Trigger |
 |---|---|---|---|---|
 | [01-movement-substrate](01-movement-substrate.md) | implemented | current-wave | none | Close after manual debug movement validation |
-| [02-idle-screensaver-grill](02-idle-screensaver-grill.md) | requires_grill | current-wave | 01 | `propose_grill:02-idle-screensaver-grill`; promote after accepted grill output |
+| [02-idle-screensaver-grill](02-idle-screensaver-grill.md) | grilled | current-wave | 01 | Use `plan-creation` for the narrow sparse lane-patrol Plan 02 when development resumes |
 | [03-composer-curiosity-grill](03-composer-curiosity-grill.md) | requires_grill | future-wave | 01, 02 evidence | Promote after idle movement evidence or explicit priority override |
 | [04-letter-interactions](04-letter-interactions.md) | future-note | far-horizon | 01, 03 | Promote when text restoration can be specified safely |
 | [05-kitty-placement-lifecycle](05-kitty-placement-lifecycle.md) | refactor-gate | gated | 01, 06 | Promote only if retransmit movement is visibly insufficient |
@@ -69,7 +71,7 @@ behavior plans and terminal compatibility evidence.
 | Plan | Status | Depends On | Commit / Branch | Done Means |
 |---|---|---|---|---|
 | [01-movement-substrate](01-movement-substrate.md) | implemented | none | `fix/md-tables-rust-v0.141.0-new` | Movement primitives and debug-manual path exist; horizontal patrol accepted as a test baseline |
-| [02-idle-screensaver-grill](02-idle-screensaver-grill.md) | requires_grill | 01 | - | Grill decisions exist and Plan 02 can be created |
+| [02-idle-screensaver-grill](02-idle-screensaver-grill.md) | grilled | 01 | `grill-logs/2026-06-18-idle-pet-screensaver.md` | Decisions exist; Plan 02 can be created later through `plan-creation` |
 | [06-terminal-compat-validation](06-terminal-compat-validation.md) | validation-note | 01 | - | Compatibility notes are updated after movement debug evidence |
 
 ## Future Horizon
@@ -77,6 +79,7 @@ behavior plans and terminal compatibility evidence.
 | Note | Status | Depends On | Why Deferred |
 |---|---|---|---|
 | [03-composer-curiosity-grill](03-composer-curiosity-grill.md) | requires_grill | 01, 02 evidence | Composer behavior has more product and layout edge cases than idle movement |
+| Advanced transcript screensaver | future-note | 02 evidence | Finding blank transcript-side space needs separate safe-rectangle and scrollback/viewport rules |
 | [04-letter-interactions](04-letter-interactions.md) | future-note | 01, 03 | Text mutation/restoration is too risky before movement safety is proven |
 | [05-kitty-placement-lifecycle](05-kitty-placement-lifecycle.md) | refactor-gate | 01, 06 | Prior cached placement attempt failed in tmux tab switching |
 
@@ -84,7 +87,8 @@ behavior plans and terminal compatibility evidence.
 
 ```text
 Plan 01: movement substrate
-├── Grill 02 -> Plan 02: idle screensaver
+├── Grill 02 closed -> Plan 02: sparse idle lane-patrol
+│   ├── Future grill/plan: advanced transcript screensaver
 │   └── Grill 03 -> Plan 03: composer curiosity
 │       └── Future 04: letter interactions
 ├── Validation 06: terminal compatibility
@@ -142,6 +146,12 @@ Plan 01: movement substrate
   horizontal `lane-patrol` as a test baseline: it patrols while the lane is
   empty and returns home when rendered text enters the lane. The home return is
   still a teleport and should be treated as debug-only behavior before Grill 02.
+- 2026-06-19: Grill 02 closed. Plan 02 should stay narrow: default-on sparse
+  idle lane-patrol for the personal fork, with config and `/pets` UI disable
+  controls, normal timing of roughly five minutes idle plus a 60-120 second
+  visit pause, accelerated debug timing, and reset-on-user-activity or lane
+  collision. Advanced transcript-side screensaver behavior is deferred to a
+  separate future grill/plan.
 
 ## Resume Instructions
 
