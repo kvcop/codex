@@ -38,6 +38,37 @@ async fn status_command_renders_immediately_and_refreshes_rate_limits_for_chatgp
 }
 
 #[tokio::test]
+async fn status_command_shows_reset_row_for_chatgpt_auth_with_provider_auth_disabled() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+    chat.config.model_provider.requires_openai_auth = false;
+
+    chat.dispatch_command(SlashCommand::Status);
+
+    let rendered = match rx.try_recv() {
+        Ok(AppEvent::InsertHistoryCell(cell)) => {
+            lines_to_single_string(&cell.display_lines(/*width*/ 80))
+        }
+        other => panic!("expected status output before refresh request, got {other:?}"),
+    };
+    assert!(
+        rendered.contains("Resets") && rendered.contains("refresh requested"),
+        "expected /status to render reset state before refreshed data arrives, got: {rendered}"
+    );
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RefreshRateLimits {
+            origin: RateLimitRefreshOrigin::StatusCommand { .. },
+        })
+    );
+    assert!(
+        !std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::ResetUsageConfirmed { .. })),
+        "/status must never send a reset consume event"
+    );
+}
+
+#[tokio::test]
 async fn status_command_refresh_updates_cached_limits_for_future_status_outputs() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     set_chatgpt_auth(&mut chat);
