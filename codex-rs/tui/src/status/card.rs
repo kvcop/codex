@@ -542,7 +542,7 @@ impl StatusHistoryCell {
                 available_count,
                 remaining_percent,
             } => vec![Span::from(format!(
-                "{} available, locked until {RESET_USAGE_MAX_REMAINING_PERCENT}% or less is left ({remaining_percent}% left).",
+                "{} available, locked until {RESET_USAGE_MAX_REMAINING_PERCENT}% or less is left (weekly {remaining_percent}% left).",
                 format_reset_credit_count(available_count)
             ))
             .dim()],
@@ -550,7 +550,7 @@ impl StatusHistoryCell {
                 available_count,
                 remaining_percent,
             } => vec![Span::from(format!(
-                "{} available; run /reset-usage to confirm ({remaining_percent}% left).",
+                "{} available; run /reset-usage to confirm (weekly {remaining_percent}% left).",
                 format_reset_credit_count(available_count)
             ))],
         };

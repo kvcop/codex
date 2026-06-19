@@ -4,11 +4,14 @@ use codex_app_server_protocol::ConsumeAccountRateLimitResetCreditOutcome;
 use codex_app_server_protocol::RateLimitResetCreditsSummary;
 use uuid::Uuid;
 
+use super::rate_limits::get_limits_duration;
 use super::*;
 use crate::bottom_pane::ResetUsageConfirmParams;
 use crate::bottom_pane::ResetUsageConfirmView;
 use crate::status::RATE_LIMIT_STALE_THRESHOLD_MINUTES;
 use crate::status::RESET_USAGE_MAX_REMAINING_PERCENT;
+use crate::status::RateLimitSnapshotDisplay;
+use crate::status::RateLimitWindowDisplay;
 use crate::status::StatusResetUsageState;
 use crate::status::format_reset_credit_count;
 
@@ -54,10 +57,12 @@ impl ChatWidget {
                 available_count: summary.available_count,
             };
         }
-        let Some(primary) = snapshot.primary.as_ref() else {
+        let Some(reset_window) = reset_usage_window(snapshot) else {
             return StatusResetUsageState::Unavailable;
         };
-        let remaining_percent = (100.0 - primary.used_percent).round().clamp(0.0, 100.0) as i64;
+        let remaining_percent = (100.0 - reset_window.used_percent)
+            .round()
+            .clamp(0.0, 100.0) as i64;
         if remaining_percent > RESET_USAGE_MAX_REMAINING_PERCENT {
             StatusResetUsageState::Locked {
                 available_count: summary.available_count,
@@ -111,7 +116,7 @@ impl ChatWidget {
                 self.reset_usage_retry = None;
                 self.add_info_message(
                     format!(
-                        "{} available, but reset is locked until {RESET_USAGE_MAX_REMAINING_PERCENT}% or less is left ({remaining_percent}% left).",
+                        "{} available, but reset is locked until {RESET_USAGE_MAX_REMAINING_PERCENT}% or less is left (weekly {remaining_percent}% left).",
                         format_reset_credit_count(available_count)
                     ),
                     /*hint*/ None,
@@ -157,7 +162,7 @@ impl ChatWidget {
                 self.reset_usage_retry = None;
                 self.add_info_message(
                     format!(
-                        "{} available, but reset is now locked until {RESET_USAGE_MAX_REMAINING_PERCENT}% or less is left ({remaining_percent}% left).",
+                        "{} available, but reset is now locked until {RESET_USAGE_MAX_REMAINING_PERCENT}% or less is left (weekly {remaining_percent}% left).",
                         format_reset_credit_count(available_count)
                     ),
                     /*hint*/ None,
@@ -254,4 +259,30 @@ impl ChatWidget {
             origin: RateLimitRefreshOrigin::StartupPrefetch,
         });
     }
+}
+
+fn reset_usage_window(snapshot: &RateLimitSnapshotDisplay) -> Option<&RateLimitWindowDisplay> {
+    if let Some(primary) = snapshot.primary.as_ref()
+        && reset_usage_window_is_weekly(primary)
+    {
+        return Some(primary);
+    }
+    if let Some(secondary) = snapshot.secondary.as_ref()
+        && reset_usage_window_is_weekly(secondary)
+    {
+        return Some(secondary);
+    }
+
+    snapshot
+        .secondary
+        .as_ref()
+        .filter(|window| window.window_minutes.is_none())
+}
+
+fn reset_usage_window_is_weekly(window: &RateLimitWindowDisplay) -> bool {
+    window
+        .window_minutes
+        .and_then(get_limits_duration)
+        .as_deref()
+        == Some("weekly")
 }

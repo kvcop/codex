@@ -101,7 +101,7 @@ impl ResetUsageConfirmView {
         let prompt = if remaining_percent <= 1 {
             "Reset your current usage window?".to_string()
         } else {
-            format!("You still have {remaining_percent}% of your limit left. Reset anyway?")
+            format!("You still have {remaining_percent}% of your weekly limit left. Reset anyway?")
         };
 
         let inner = ListSelectionView::new(
