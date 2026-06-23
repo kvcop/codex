@@ -25,6 +25,9 @@ impl ChatWidget {
         &mut self,
         reset_credits: Option<RateLimitResetCreditsSummary>,
     ) {
+        self.available_rate_limit_reset_credits = reset_credits
+            .as_ref()
+            .map(|summary| summary.available_count);
         self.rate_limit_reset_credits = reset_credits;
         self.refresh_status_line();
     }
@@ -255,8 +258,11 @@ impl ChatWidget {
 
     fn refresh_reset_usage_data(&mut self, message: &str) {
         self.add_info_message(message.to_string(), /*hint*/ None);
+        let reset_hint_request_id = self.start_rate_limit_reset_startup_check();
         self.app_event_tx.send(AppEvent::RefreshRateLimits {
-            origin: RateLimitRefreshOrigin::StartupPrefetch,
+            origin: RateLimitRefreshOrigin::StartupPrefetch {
+                reset_hint_request_id,
+            },
         });
     }
 }
